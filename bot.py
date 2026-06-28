@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -17,7 +18,7 @@ load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Меняем на DEBUG для подробных логов
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
@@ -52,19 +53,57 @@ def get_team_keyboard():
 async def show_team(message: types.Message, team_name: str):
     """Показывает состав выбранной команды"""
     try:
+        logging.info(f"=== НАЧАЛО show_team: {team_name} ===")
+        
+        # ПРОВЕРКА 1: Проверяем, что файл существует и читается
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(current_dir, 'players.json')
+        logging.info(f"Путь к файлу: {file_path}")
+        
+        if os.path.exists(file_path):
+            logging.info("Файл players.json существует")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw_data = f.read()
+                logging.info(f"Содержимое файла (первые 200 символов): {raw_data[:200]}")
+        else:
+            logging.error("Файл players.json НЕ СУЩЕСТВУЕТ!")
+            await message.answer("❌ Файл players.json не найден на сервере!")
+            return
+        
+        # ПРОВЕРКА 2: Загружаем данные команды
+        logging.info(f"Вызываем load_team_by_name('{team_name}')")
         team_data = load_team_by_name(team_name)
+        logging.info(f"Результат load_team_by_name: {team_data}")
+        
         if not team_data:
+            logging.warning(f"Команда '{team_name}' не найдена!")
             await message.answer(f"❌ Команда '{team_name}' не найдена!")
             return
         
         players = team_data.get('players', [])
+        logging.info(f"Найдено игроков: {len(players)}")
+        
+        if not players:
+            await message.answer(f"❌ В команде '{team_name}' нет игроков!")
+            return
+        
         team_name_display = team_data.get('team_name', team_name)
         coach = team_data.get('coach', 'Неизвестно')
+        
+        logging.info(f"Название: {team_name_display}, Тренер: {coach}")
         
         # Группируем по позициям
         goalies = get_players_by_position(players, "вратарь")
         defenders = get_players_by_position(players, "защитник")
         forwards = get_players_by_position(players, "нападающий")
+        
+        logging.info(f"Вратари: {len(goalies)}, Защитники: {len(defenders)}, Нападающие: {len(forwards)}")
+        
+        # Проверяем структуру первого игрока
+        if players:
+            logging.info(f"Первый игрок: {players[0]}")
+            logging.info(f"Ключи игрока: {players[0].keys()}")
         
         # Выбираем эмодзи для команды
         icon = "🦅"
@@ -74,7 +113,6 @@ async def show_team(message: types.Message, team_name: str):
         if goalies:
             text += "🥅 <b>Вратари:</b>\n"
             for p in goalies:
-                # ИСПРАВЛЕНО: проверяем наличие фамилии
                 surname = p.get('surname', '')
                 if surname:
                     text += f"  #{p['number']} {p['name']} {surname}\n"
@@ -84,7 +122,6 @@ async def show_team(message: types.Message, team_name: str):
         if defenders:
             text += "\n🛡️ <b>Защитники:</b>\n"
             for p in defenders:
-                # ИСПРАВЛЕНО: проверяем наличие фамилии
                 surname = p.get('surname', '')
                 if surname:
                     text += f"  #{p['number']} {p['name']} {surname}\n"
@@ -94,7 +131,6 @@ async def show_team(message: types.Message, team_name: str):
         if forwards:
             text += "\n⚡ <b>Нападающие:</b>\n"
             for p in forwards:
-                # ИСПРАВЛЕНО: проверяем наличие фамилии
                 surname = p.get('surname', '')
                 if surname:
                     text += f"  #{p['number']} {p['name']} {surname}\n"
@@ -102,6 +138,9 @@ async def show_team(message: types.Message, team_name: str):
                     text += f"  #{p['number']} {p['name']}\n"
         
         text += f"\n👨‍🏫 Тренер: {coach}"
+        
+        logging.info("Текст успешно сформирован")
+        logging.info(f"Длина текста: {len(text)} символов")
         
         # Добавляем кнопку для просмотра другой команды
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -111,10 +150,12 @@ async def show_team(message: types.Message, team_name: str):
         ])
         
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        logging.info("=== show_team УСПЕШНО ЗАВЕРШЕНА ===")
     
     except Exception as e:
-        logging.error(f"Ошибка в show_team: {e}")
-        await message.answer("❌ Произошла ошибка при загрузке состава. Попробуйте позже.")
+        logging.error(f"!!! ОШИБКА В show_team: {e}", exc_info=True)
+        error_msg = f"❌ Ошибка: {str(e)}\n\nТип ошибки: {type(e).__name__}"
+        await message.answer(error_msg)
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -192,7 +233,6 @@ async def cmd_player(message: types.Message):
         # Определяем команду игрока
         team_name = player.get('team', 'Неизвестно')
         
-        # ИСПРАВЛЕНО: проверяем наличие фамилии
         surname = player.get('surname', '')
         full_name = f"{player['name']} {surname}" if surname else player['name']
         
@@ -212,8 +252,8 @@ async def cmd_player(message: types.Message):
         await message.answer(text, parse_mode="HTML")
     
     except Exception as e:
-        logging.error(f"Ошибка в /player: {e}")
-        await message.answer("❌ Произошла ошибка при загрузке игрока. Попробуйте позже.")
+        logging.error(f"Ошибка в /player: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {str(e)}")
 
 @dp.message(Command("match"))
 async def cmd_match(message: types.Message):
@@ -288,7 +328,7 @@ async def main():
     try:
         await dp.start_polling(bot)
     except Exception as e:
-        logging.error(f"Ошибка при запуске бота: {e}")
+        logging.error(f"Ошибка при запуске бота: {e}", exc_info=True)
         raise
     finally:
         await bot.session.close()
@@ -300,5 +340,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logging.info("Бот остановлен пользователем")
     except Exception as e:
-        logging.error(f"Критическая ошибка: {e}")
+        logging.error(f"Критическая ошибка: {e}", exc_info=True)
         sys.exit(1)
