@@ -9,28 +9,22 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
+from config import BOT_TOKEN
+from game import load_players, get_players_by_position, get_player_by_id, load_team_by_name
 
 # Загружаем переменные окружения
 load_dotenv()
 
-# Получаем токен из переменных окружения
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-if not BOT_TOKEN:
-    logging.error("BOT_TOKEN не найден в переменных окружения!")
-    sys.exit(1)
-
-# Импортируем функции из game.py
-from game import load_players, get_players_by_position, get_player_by_id, get_team_info, load_team_by_name
-
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+
+# Проверка токена
+if not BOT_TOKEN:
+    logging.error("BOT_TOKEN не найден в переменных окружения!")
+    sys.exit(1)
 
 # Создаем экземпляры бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
@@ -41,7 +35,7 @@ dp = Dispatcher(storage=storage)
 class TeamChoice(StatesGroup):
     selecting = State()
 
-# Клавиатуры для выбора команды
+# Клавиатура для выбора команды
 def get_team_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -54,17 +48,7 @@ def get_team_keyboard():
     ])
     return keyboard
 
-# Команды для выбора команды
-@dp.message(Command("team_black"))
-async def cmd_team_black(message: types.Message):
-    """Показывает состав Чёрных Воронов"""
-    await show_team(message, "Чёрные Вороны")
-
-@dp.message(Command("team_red"))
-async def cmd_team_red(message: types.Message):
-    """Показывает состав Красных Орлов"""
-    await show_team(message, "Красные Орлы")
-
+# Функция для отображения состава команды
 async def show_team(message: types.Message, team_name: str):
     """Показывает состав выбранной команды"""
     try:
@@ -83,10 +67,7 @@ async def show_team(message: types.Message, team_name: str):
         forwards = get_players_by_position(players, "нападающий")
         
         # Выбираем эмодзи для команды
-        if "Вороны" in team_name_display:
-            icon = "🦅"
-        else:
-            icon = "🦅"
+        icon = "🦅"
         
         text = f"{icon} <b>{team_name_display.upper()} - СОСТАВ</b>\n\n"
         
@@ -120,7 +101,6 @@ async def show_team(message: types.Message, team_name: str):
         logging.error(f"Ошибка в show_team: {e}")
         await message.answer("❌ Произошла ошибка при загрузке состава. Попробуйте позже.")
 
-
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     """Команда /start - приветствие"""
@@ -130,12 +110,11 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "Выберите команду, чтобы просмотреть её состав:\n"
         "Или используйте другие команды:\n"
         "/match - Начать матч\n"
-        "/player [номер] - Карточка игрока (поиск по всем командам)\n"
+        "/player [номер] - Карточка игрока\n"
         "/help - Помощь",
         parse_mode="HTML",
         reply_markup=get_team_keyboard()
     )
-
 
 @dp.message(Command("team"))
 async def cmd_team(message: types.Message):
@@ -146,32 +125,15 @@ async def cmd_team(message: types.Message):
         reply_markup=get_team_keyboard()
     )
 
+@dp.message(Command("team_black"))
+async def cmd_team_black(message: types.Message):
+    """Показывает состав Чёрных Воронов"""
+    await show_team(message, "Чёрные Вороны")
 
-@dp.callback_query()
-async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка нажатий на кнопки"""
-    await callback.answer()
-    
-    if callback.data == "team_black":
-        await show_team(callback.message, "Чёрные Вороны")
-        await callback.message.delete()
-    
-    elif callback.data == "team_red":
-        await show_team(callback.message, "Красные Орлы")
-        await callback.message.delete()
-    
-    elif callback.data == "show_teams":
-        await callback.message.answer(
-            "🏒 <b>Выберите команду:</b>",
-            parse_mode="HTML",
-            reply_markup=get_team_keyboard()
-        )
-    
-    elif callback.data == "cancel":
-        await callback.message.answer("❌ Действие отменено.")
-        await callback.message.delete()
-        await state.clear()
-
+@dp.message(Command("team_red"))
+async def cmd_team_red(message: types.Message):
+    """Показывает состав Красных Орлов"""
+    await show_team(message, "Красные Орлы")
 
 @dp.message(Command("player"))
 async def cmd_player(message: types.Message):
@@ -195,7 +157,7 @@ async def cmd_player(message: types.Message):
             )
             return
         
-        # Ищем игрока во всех командах
+        # Загружаем всех игроков из всех команд
         players = load_players()
         player = get_player_by_id(players, player_id)
         
@@ -234,7 +196,6 @@ async def cmd_player(message: types.Message):
         logging.error(f"Ошибка в /player: {e}")
         await message.answer("❌ Произошла ошибка при загрузке игрока. Попробуйте позже.")
 
-
 @dp.message(Command("match"))
 async def cmd_match(message: types.Message):
     """Команда /match - начало матча"""
@@ -245,7 +206,6 @@ async def cmd_match(message: types.Message):
         "⏳ Функция в разработке...",
         parse_mode="HTML"
     )
-
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -265,6 +225,30 @@ async def cmd_help(message: types.Message):
     )
     await message.answer(help_text, parse_mode="HTML")
 
+@dp.callback_query()
+async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
+    """Обработка нажатий на кнопки"""
+    await callback.answer()
+    
+    if callback.data == "team_black":
+        await show_team(callback.message, "Чёрные Вороны")
+        await callback.message.delete()
+    
+    elif callback.data == "team_red":
+        await show_team(callback.message, "Красные Орлы")
+        await callback.message.delete()
+    
+    elif callback.data == "show_teams":
+        await callback.message.answer(
+            "🏒 <b>Выберите команду:</b>",
+            parse_mode="HTML",
+            reply_markup=get_team_keyboard()
+        )
+    
+    elif callback.data == "cancel":
+        await callback.message.answer("❌ Действие отменено.")
+        await callback.message.delete()
+        await state.clear()
 
 @dp.message()
 async def unknown_command(message: types.Message):
@@ -273,7 +257,6 @@ async def unknown_command(message: types.Message):
         "❌ Неизвестная команда.\n"
         "Используйте /help для списка доступных команд."
     )
-
 
 async def main():
     """Главная функция запуска бота"""
@@ -291,7 +274,6 @@ async def main():
     finally:
         await bot.session.close()
         logging.info("Бот остановлен")
-
 
 if __name__ == "__main__":
     try:
