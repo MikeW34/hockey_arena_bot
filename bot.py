@@ -38,7 +38,7 @@ dp = Dispatcher()
 async def cmd_start(message: types.Message):
     """Команда /start - приветствие"""
     await message.answer(
-        "🏒 Привет! Я хоккейный бот команды «Чёрные Вороны»!\n\n"
+        "🏒 Привет! Я хоккейный бот!\n\n"
         "Доступные команды:\n"
         "/match - Начать матч\n"
         "/team - Состав команды\n"
