@@ -74,17 +74,32 @@ async def show_team(message: types.Message, team_name: str):
         if goalies:
             text += "🥅 <b>Вратари:</b>\n"
             for p in goalies:
-                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
+                # ИСПРАВЛЕНО: проверяем наличие фамилии
+                surname = p.get('surname', '')
+                if surname:
+                    text += f"  #{p['number']} {p['name']} {surname}\n"
+                else:
+                    text += f"  #{p['number']} {p['name']}\n"
         
         if defenders:
             text += "\n🛡️ <b>Защитники:</b>\n"
             for p in defenders:
-                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
+                # ИСПРАВЛЕНО: проверяем наличие фамилии
+                surname = p.get('surname', '')
+                if surname:
+                    text += f"  #{p['number']} {p['name']} {surname}\n"
+                else:
+                    text += f"  #{p['number']} {p['name']}\n"
         
         if forwards:
             text += "\n⚡ <b>Нападающие:</b>\n"
             for p in forwards:
-                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
+                # ИСПРАВЛЕНО: проверяем наличие фамилии
+                surname = p.get('surname', '')
+                if surname:
+                    text += f"  #{p['number']} {p['name']} {surname}\n"
+                else:
+                    text += f"  #{p['number']} {p['name']}\n"
         
         text += f"\n👨‍🏫 Тренер: {coach}"
         
@@ -177,10 +192,14 @@ async def cmd_player(message: types.Message):
         # Определяем команду игрока
         team_name = player.get('team', 'Неизвестно')
         
+        # ИСПРАВЛЕНО: проверяем наличие фамилии
+        surname = player.get('surname', '')
+        full_name = f"{player['name']} {surname}" if surname else player['name']
+        
         text = (
             f"🏒 <b>КАРТОЧКА ИГРОКА</b>\n\n"
             f"{position_emoji} #{player['number']} "
-            f"<b>{player['name']} {player['surname']}</b>\n"
+            f"<b>{full_name}</b>\n"
             f"📍 {player['position'].capitalize()}\n"
             f"🏷️ Команда: {team_name}\n\n"
             f"📊 <b>Характеристики:</b>\n"
