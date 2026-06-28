@@ -4,10 +4,13 @@ import os
 import sys
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
-from config import BOT_TOKEN
-from game import load_players, get_players_by_position
 
+# Загружаем переменные окружения
 load_dotenv()
 
 # Получаем токен из переменных окружения
@@ -18,7 +21,7 @@ if not BOT_TOKEN:
     sys.exit(1)
 
 # Импортируем функции из game.py
-from game import load_players, get_players_by_position, get_player_by_id
+from game import load_players, get_players_by_position, get_player_by_id, get_team_info, load_team_by_name
 
 # Настройка логирования
 logging.basicConfig(
@@ -31,34 +34,61 @@ logging.basicConfig(
 
 # Создаем экземпляры бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
+# Состояния для выбора команды
+class TeamChoice(StatesGroup):
+    selecting = State()
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    """Команда /start - приветствие"""
-    await message.answer(
-        "🏒 Привет! Я хоккейный бот!\n\n"
-        "Доступные команды:\n"
-        "/match - Начать матч\n"
-        "/team - Состав команды\n"
-        "/player [номер] - Карточка игрока\n"
-        "/help - Помощь"
-    )
+# Клавиатуры для выбора команды
+def get_team_keyboard():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🦅 Чёрные Вороны", callback_data="team_black"),
+            InlineKeyboardButton(text="🦅 Красные Орлы", callback_data="team_red")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+        ]
+    ])
+    return keyboard
 
+# Команды для выбора команды
+@dp.message(Command("team_black"))
+async def cmd_team_black(message: types.Message):
+    """Показывает состав Чёрных Воронов"""
+    await show_team(message, "Чёрные Вороны")
 
-@dp.message(Command("team"))
-async def cmd_team(message: types.Message):
-    """Показывает состав команды"""
+@dp.message(Command("team_red"))
+async def cmd_team_red(message: types.Message):
+    """Показывает состав Красных Орлов"""
+    await show_team(message, "Красные Орлы")
+
+async def show_team(message: types.Message, team_name: str):
+    """Показывает состав выбранной команды"""
     try:
-        players = load_players()
+        team_data = load_team_by_name(team_name)
+        if not team_data:
+            await message.answer(f"❌ Команда '{team_name}' не найдена!")
+            return
+        
+        players = team_data.get('players', [])
+        team_name_display = team_data.get('team_name', team_name)
+        coach = team_data.get('coach', 'Неизвестно')
         
         # Группируем по позициям
         goalies = get_players_by_position(players, "вратарь")
         defenders = get_players_by_position(players, "защитник")
         forwards = get_players_by_position(players, "нападающий")
         
-        text = "🦅 <b>ЧЁРНЫЕ ВОРОНЫ - СОСТАВ</b>\n\n"
+        # Выбираем эмодзи для команды
+        if "Вороны" in team_name_display:
+            icon = "🦅"
+        else:
+            icon = "🦅"
+        
+        text = f"{icon} <b>{team_name_display.upper()} - СОСТАВ</b>\n\n"
         
         if goalies:
             text += "🥅 <b>Вратари:</b>\n"
@@ -75,32 +105,72 @@ async def cmd_team(message: types.Message):
             for p in forwards:
                 text += f"  #{p['number']} {p['name']} {p['surname']}\n"
         
-        text += f"\n👨‍🏫 Тренер: Ивашка Тупоголовый"
-
-        text = "🦅 <b>КРАСНЫЕ ОРЛЫ - СОСТАВ</b>\n\n"
+        text += f"\n👨‍🏫 Тренер: {coach}"
         
-        if goalies:
-            text += "🥅 <b>Вратари:</b>\n"
-            for p in goalies:
-                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
+        # Добавляем кнопку для просмотра другой команды
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔄 Показать другую команду", callback_data="show_teams")
+            ]
+        ])
         
-        if defenders:
-            text += "\n🛡️ <b>Защитники:</b>\n"
-            for p in defenders:
-                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
-        
-        if forwards:
-            text += "\n⚡ <b>Нападающие:</b>\n"
-            for p in forwards:
-                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
-        
-        text += f"\n👨‍🏫 Тренер: "Павел Ихтиандрович"
-        
-        await message.answer(text, parse_mode="HTML")
+        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     
     except Exception as e:
-        logging.error(f"Ошибка в /team: {e}")
+        logging.error(f"Ошибка в show_team: {e}")
         await message.answer("❌ Произошла ошибка при загрузке состава. Попробуйте позже.")
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    """Команда /start - приветствие"""
+    await state.set_state(TeamChoice.selecting)
+    await message.answer(
+        "🏒 <b>Добро пожаловать в хоккейный бот!</b>\n\n"
+        "Выберите команду, чтобы просмотреть её состав:\n"
+        "Или используйте другие команды:\n"
+        "/match - Начать матч\n"
+        "/player [номер] - Карточка игрока (поиск по всем командам)\n"
+        "/help - Помощь",
+        parse_mode="HTML",
+        reply_markup=get_team_keyboard()
+    )
+
+
+@dp.message(Command("team"))
+async def cmd_team(message: types.Message):
+    """Команда /team - выбор команды"""
+    await message.answer(
+        "🏒 <b>Выберите команду:</b>",
+        parse_mode="HTML",
+        reply_markup=get_team_keyboard()
+    )
+
+
+@dp.callback_query()
+async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
+    """Обработка нажатий на кнопки"""
+    await callback.answer()
+    
+    if callback.data == "team_black":
+        await show_team(callback.message, "Чёрные Вороны")
+        await callback.message.delete()
+    
+    elif callback.data == "team_red":
+        await show_team(callback.message, "Красные Орлы")
+        await callback.message.delete()
+    
+    elif callback.data == "show_teams":
+        await callback.message.answer(
+            "🏒 <b>Выберите команду:</b>",
+            parse_mode="HTML",
+            reply_markup=get_team_keyboard()
+        )
+    
+    elif callback.data == "cancel":
+        await callback.message.answer("❌ Действие отменено.")
+        await callback.message.delete()
+        await state.clear()
 
 
 @dp.message(Command("player"))
@@ -125,6 +195,7 @@ async def cmd_player(message: types.Message):
             )
             return
         
+        # Ищем игрока во всех командах
         players = load_players()
         player = get_player_by_id(players, player_id)
         
@@ -141,11 +212,15 @@ async def cmd_player(message: types.Message):
             "нападающий": "⚡"
         }.get(player["position"], "🏒")
         
+        # Определяем команду игрока
+        team_name = player.get('team', 'Неизвестно')
+        
         text = (
             f"🏒 <b>КАРТОЧКА ИГРОКА</b>\n\n"
             f"{position_emoji} #{player['number']} "
             f"<b>{player['name']} {player['surname']}</b>\n"
-            f"📍 {player['position'].capitalize()}\n\n"
+            f"📍 {player['position'].capitalize()}\n"
+            f"🏷️ Команда: {team_name}\n\n"
             f"📊 <b>Характеристики:</b>\n"
             f"🎯 Бросок: {s['бросок']}\n"
             f"🔄 Пас: {s['пас']}\n"
@@ -165,9 +240,10 @@ async def cmd_match(message: types.Message):
     """Команда /match - начало матча"""
     await message.answer(
         "🏒 <b>МАТЧ НАЧИНАЕТСЯ!</b>\n\n"
-        "Команда «Чёрные Вороны» выходит на лёд!\n"
-        "Скоро здесь появится симуляция матча.\n\n"
-        "⏳ Функция в разработке..."
+        "⚔️ <b>Чёрные Вороны</b> vs <b>Красные Орлы</b>\n\n"
+        "Скоро здесь появится симуляция матча.\n"
+        "⏳ Функция в разработке...",
+        parse_mode="HTML"
     )
 
 
@@ -177,12 +253,15 @@ async def cmd_help(message: types.Message):
     help_text = (
         "📋 <b>Доступные команды:</b>\n\n"
         "/start - Главное меню\n"
+        "/team - Выбор команды для просмотра состава\n"
+        "/team_black - Состав Чёрных Воронов\n"
+        "/team_red - Состав Красных Орлов\n"
         "/match - Начать матч\n"
-        "/team - Состав команды\n"
         "/player [номер] - Карточка игрока\n"
         "/help - Помощь\n\n"
-        "🏒 <b>Чёрные Вороны</b>\n"
-        "👨‍🏫 Тренер: Ивашка Тупоголовый"
+        "🏒 <b>Доступные команды:</b>\n"
+        "🦅 Чёрные Вороны (тренер: Ивашка Тупоголовый)\n"
+        "🦅 Красные Орлы (тренер: Павел Ихтиандрович)"
     )
     await message.answer(help_text, parse_mode="HTML")
 
