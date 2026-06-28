@@ -76,6 +76,25 @@ async def cmd_team(message: types.Message):
                 text += f"  #{p['number']} {p['name']} {p['surname']}\n"
         
         text += f"\n👨‍🏫 Тренер: Ивашка Тупоголовый"
+
+        text = "🦅 <b>КРАСНЫЕ ОРЛЫ - СОСТАВ</b>\n\n"
+        
+        if goalies:
+            text += "🥅 <b>Вратари:</b>\n"
+            for p in goalies:
+                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
+        
+        if defenders:
+            text += "\n🛡️ <b>Защитники:</b>\n"
+            for p in defenders:
+                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
+        
+        if forwards:
+            text += "\n⚡ <b>Нападающие:</b>\n"
+            for p in forwards:
+                text += f"  #{p['number']} {p['name']} {p['surname']}\n"
+        
+        text += f"\n👨‍🏫 Тренер: "Павел Ихтиандрович"
         
         await message.answer(text, parse_mode="HTML")
     
