@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, 
-    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+    KeyboardButton, ReplyKeyboardMarkup
 )
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -40,19 +40,20 @@ dp = Dispatcher(storage=storage)
 class MatchStates(StatesGroup):
     waiting_for_match = State()
 
-# ГЛАВНОЕ МЕНЮ - физические кнопки внизу
+# ГЛАВНОЕ МЕНЮ - физические кнопки внизу как на картинке
 def get_main_menu():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="🏒 Играть матч"),
+                KeyboardButton(text="🏒 Сыграть матч"),
                 KeyboardButton(text="📋 Состав команды")
             ],
             [
-                KeyboardButton(text="⭐ Рейтинг"),
+                KeyboardButton(text="🏆 Лиги"),
                 KeyboardButton(text="🔄 Коллекция")
             ],
             [
+                KeyboardButton(text="👤 Профиль"),
                 KeyboardButton(text="❓ Помощь")
             ]
         ],
@@ -137,7 +138,7 @@ class MatchManager:
             
             # Проверка на конец периода
             if episode_in_period == 10:
-                event = f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА! Счёт: {self.match.team_a_name} {self.match.score_a} - {self.match.score_b} {self.match.team_b_name}"
+                event = f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА!\n📊 Счёт: {self.match.team_a_name} {self.match.score_a} - {self.match.score_b} {self.match.team_b_name}"
             
             self.episodes.append({
                 'period': period,
@@ -306,12 +307,21 @@ async def show_team(message: types.Message, team_name: str):
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    """Команда /start - приветствие с меню"""
-    await message.answer(
+    """Команда /start - показывает главное меню с кнопками"""
+    welcome_text = (
         "🏒 <b>Добро пожаловать в хоккейный бот!</b>\n\n"
-        "Выберите действие из меню ниже:",
+        "🎮 Выберите действие из меню ниже:\n\n"
+        "🏒 Сыграть матч - начать матч между командами\n"
+        "📋 Состав команды - просмотр состава\n"
+        "🏆 Лиги - информация о лигах\n"
+        "🔄 Коллекция - все игроки\n"
+        "👤 Профиль - ваш профиль\n"
+        "❓ Помощь - справка"
+    )
+    await message.answer(
+        welcome_text,
         parse_mode="HTML",
-        reply_markup=get_main_menu()
+        reply_markup=get_main_menu()  # Отправляем меню с кнопками
     )
 
 @dp.message(Command("menu"))
@@ -324,7 +334,7 @@ async def cmd_menu(message: types.Message):
     )
 
 # Обработчики кнопок меню
-@dp.message(lambda message: message.text == "🏒 Играть матч")
+@dp.message(lambda message: message.text == "🏒 Сыграть матч")
 async def play_match(message: types.Message):
     """Кнопка Играть матч"""
     await message.answer(
@@ -342,43 +352,24 @@ async def show_team_menu(message: types.Message):
         reply_markup=get_team_keyboard()
     )
 
-@dp.message(lambda message: message.text == "⭐ Рейтинг")
-async def show_rating(message: types.Message):
-    """Кнопка Рейтинг"""
-    try:
-        teams = get_all_teams()
-        if not teams:
-            await message.answer("❌ Команды не найдены!")
-            return
-        
-        text = "⭐ <b>РЕЙТИНГ КОМАНД</b>\n\n"
-        
-        # Сортируем по рейтингу
-        team_ratings = []
-        for team in teams:
-            players = team.get('players', [])
-            main_players = [p for p in players if p.get('is_main', False)]
-            if main_players:
-                total = sum(p['stats'].get('рейтинг', 0) for p in main_players[:6])
-                rating = round(total / 6, 1)
-            else:
-                rating = 0
-            team_ratings.append({
-                'name': team.get('team_name', 'Неизвестно'),
-                'rating': rating
-            })
-        
-        team_ratings.sort(key=lambda x: x['rating'], reverse=True)
-        
-        for i, team in enumerate(team_ratings, 1):
-            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            text += f"{medal} <b>{team['name']}</b> - {team['rating']}\n"
-        
-        await message.answer(text, parse_mode="HTML")
-    
-    except Exception as e:
-        logging.error(f"Ошибка в show_rating: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {str(e)}")
+@dp.message(lambda message: message.text == "🏆 Лиги")
+async def show_leagues(message: types.Message):
+    """Кнопка Лиги"""
+    text = (
+        "🏆 <b>ХОККЕЙНЫЕ ЛИГИ</b>\n\n"
+        "📍 <b>КХЛ (Континентальная Хоккейная Лига)</b>\n"
+        "• Страны: Россия, Беларусь, Казахстан, Китай\n"
+        "• Количество команд: 23\n"
+        "• Главный приз: Кубок Гагарина\n"
+        "• Сезон: Регулярный чемпионат → Плей-офф\n\n"
+        "📌 <b>Другие лиги в разработке:</b>\n"
+        "• 🏒 НХЛ (Национальная Хоккейная Лига)\n"
+        "• 🏒 ВХЛ (Высшая Хоккейная Лига)\n"
+        "• 🏒 МХЛ (Молодёжная Хоккейная Лига)\n\n"
+        "⚡ Регулярный чемпионат: команды играют друг с другом за очки\n"
+        "🏆 Плей-офф: матчи на выбывание, победитель получает Кубок"
+    )
+    await message.answer(text, parse_mode="HTML")
 
 @dp.message(lambda message: message.text == "🔄 Коллекция")
 async def show_collection(message: types.Message):
@@ -397,13 +388,23 @@ async def show_collection(message: types.Message):
             teams[team].append(player)
         
         for team_name, team_players in teams.items():
-            text += f"🏒 <b>{team_name}</b> ({len(team_players)} игроков)\n"
-            for p in team_players[:5]:
-                surname = p.get('surname', '')
-                text += f"  #{p['number']} {p['name']} {surname} - {p['position']}\n"
-            if len(team_players) > 5:
-                text += f"  ... и ещё {len(team_players) - 5} игроков\n"
-            text += "\n"
+            main_players = [p for p in team_players if p.get('is_main', False)]
+            reserve_players = [p for p in team_players if not p.get('is_main', False)]
+            
+            text += f"🏒 <b>{team_name}</b>\n"
+            text += f"   Основной состав: {len(main_players)} игроков\n"
+            text += f"   Запасные: {len(reserve_players)} игроков\n"
+            text += f"   Всего: {len(team_players)} игроков\n\n"
+        
+        # Добавляем общую статистику
+        total_players = len(players)
+        total_main = len([p for p in players if p.get('is_main', False)])
+        total_reserve = total_players - total_main
+        
+        text += "📊 <b>Общая статистика:</b>\n"
+        text += f"   Всего игроков: {total_players}\n"
+        text += f"   В основном составе: {total_main}\n"
+        text += f"   В запасе: {total_reserve}\n"
         
         await message.answer(text, parse_mode="HTML")
     
@@ -411,15 +412,38 @@ async def show_collection(message: types.Message):
         logging.error(f"Ошибка в show_collection: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {str(e)}")
 
+@dp.message(lambda message: message.text == "👤 Профиль")
+async def show_profile(message: types.Message):
+    """Кнопка Профиль"""
+    # Временный профиль пользователя
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    
+    text = (
+        f"👤 <b>ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ</b>\n\n"
+        f"📌 Имя: {username}\n"
+        f"🆔 ID: {user_id}\n\n"
+        f"📊 <b>Статистика:</b>\n"
+        f"🏒 Сыграно матчей: 0\n"
+        f"🏆 Побед: 0\n"
+        f"⚽ Голов забито: 0\n"
+        f"🔄 Передач: 0\n\n"
+        f"⭐ Рейтинг: 1000\n"
+        f"🏆 Кубков: 0\n\n"
+        f"📅 Дата регистрации: {message.date.strftime('%d.%m.%Y')}"
+    )
+    await message.answer(text, parse_mode="HTML")
+
 @dp.message(lambda message: message.text == "❓ Помощь")
 async def show_help(message: types.Message):
     """Кнопка Помощь"""
     help_text = (
         "📋 <b>Доступные команды:</b>\n\n"
-        "🏒 <b>Играть матч</b> - начать матч между командами\n"
+        "🏒 <b>Сыграть матч</b> - начать матч между командами\n"
         "📋 <b>Состав команды</b> - просмотр состава команд\n"
-        "⭐ <b>Рейтинг</b> - рейтинг команд\n"
-        "🔄 <b>Коллекция</b> - все игроки\n"
+        "🏆 <b>Лиги</b> - информация о хоккейных лигах\n"
+        "🔄 <b>Коллекция</b> - все игроки команд\n"
+        "👤 <b>Профиль</b> - ваш профиль\n"
         "❓ <b>Помощь</b> - это сообщение\n\n"
         "📌 <b>Дополнительные команды:</b>\n"
         "/menu - Показать главное меню\n"
@@ -432,7 +456,7 @@ async def show_help(message: types.Message):
 
 @dp.callback_query()
 async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка нажатий на кнопки"""
+    """Обработка нажатий на инлайн кнопки"""
     await callback.answer()
     
     if callback.data == "team_black":
@@ -489,6 +513,16 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
         # Сохраняем в активные матчи
         chat_id = message.chat.id
         active_matches[chat_id] = match_manager
+        
+        # Отправляем сообщение о начале матча
+        await message.answer(
+            f"🏒 <b>МАТЧ НАЧИНАЕТСЯ!</b>\n\n"
+            f"⚔️ {team_a_name} vs {team_b_name}\n"
+            f"📊 Рейтинг {team_a_name}: {match_manager.match.team_a_rating}\n"
+            f"📊 Рейтинг {team_b_name}: {match_manager.match.team_b_rating}\n\n"
+            f"⏳ Нажмите кнопку ниже для просмотра эпизодов:",
+            parse_mode="HTML"
+        )
         
         # Показываем первый эпизод
         await show_next_episode(message)
