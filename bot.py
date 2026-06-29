@@ -230,41 +230,51 @@ async def show_team(message: types.Message, team_name: str):
         team_name_display = team_data.get('team_name', team_name)
         coach = team_data.get('coach', 'Неизвестно')
         
+        # Разделяем основной состав и запасных
         main_players = [p for p in players if p.get('is_main', False)]
         reserve_players = [p for p in players if not p.get('is_main', False)]
         
-        # Группируем по позициям
-        goalies = get_players_by_position(main_players, "вратарь")
-        defenders = get_players_by_position(main_players, "защитник")
-        forwards = get_players_by_position(main_players, "нападающий")
+        # Группируем основной состав по позициям
+        goalies = [p for p in main_players if p['position'] == 'вратарь']
+        defenders = [p for p in main_players if 'защитник' in p['position']]
+        forwards = [p for p in main_players if 'нападающий' in p['position']]
         
         text = f"🦅 <b>{team_name_display.upper()}</b>\n"
         text += f"👨‍🏫 Тренер: {coach}\n\n"
         text += "🔴 <b>ОСНОВНОЙ СОСТАВ (6 игроков)</b>\n\n"
         
+        # Вратари
         if goalies:
             text += "🥅 <b>Вратари:</b>\n"
             for p in goalies:
                 surname = p.get('surname', '')
                 text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
+            text += "\n"
         
+        # Защитники
         if defenders:
-            text += "\n🛡️ <b>Защитники:</b>\n"
+            text += "🛡️ <b>Защитники:</b>\n"
             for p in defenders:
                 surname = p.get('surname', '')
                 text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
+            text += "\n"
         
+        # Нападающие
         if forwards:
-            text += "\n⚡ <b>Нападающие:</b>\n"
+            text += "⚡ <b>Нападающие:</b>\n"
             for p in forwards:
                 surname = p.get('surname', '')
                 text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
+            text += "\n"
         
+        # Запасные
         if reserve_players:
-            text += f"\n🔄 <b>Запасные ({len(reserve_players)} игроков)</b>\n"
-            for p in reserve_players[:10]:
+            text += f"🔄 <b>Запасные ({len(reserve_players)} игроков)</b>\n"
+            for p in reserve_players[:15]:  # Показываем первых 15 запасных
                 surname = p.get('surname', '')
                 text += f"  #{p['number']} {p['name']} {surname} ({p['position']})\n"
+            if len(reserve_players) > 15:
+                text += f"  ... и ещё {len(reserve_players) - 15} игроков\n"
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -273,12 +283,12 @@ async def show_team(message: types.Message, team_name: str):
             ]
         ])
         
-        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        await message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     
     except Exception as e:
         logging.error(f"Ошибка в show_team: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {str(e)}")
-
+        
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     """Команда /start - показывает главное меню с инлайн-кнопками"""
