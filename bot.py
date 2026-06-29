@@ -4,10 +4,7 @@ import os
 import sys
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton, 
-    KeyboardButton, ReplyKeyboardMarkup
-)
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -40,29 +37,28 @@ dp = Dispatcher(storage=storage)
 class MatchStates(StatesGroup):
     waiting_for_match = State()
 
-# ГЛАВНОЕ МЕНЮ - физические кнопки внизу как на картинке
+# ГЛАВНОЕ МЕНЮ - инлайн кнопки (как ссылки)
 def get_main_menu():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="🏒 Сыграть матч"),
-                KeyboardButton(text="📋 Состав команды")
-            ],
-            [
-                KeyboardButton(text="🏆 Лиги"),
-                KeyboardButton(text="🔄 Коллекция")
-            ],
-            [
-                KeyboardButton(text="👤 Профиль"),
-                KeyboardButton(text="❓ Помощь")
-            ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🏒 Сыграть матч", callback_data="play_match"),
+            InlineKeyboardButton(text="📋 Состав команды", callback_data="show_team")
         ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
+        [
+            InlineKeyboardButton(text="🏆 Лиги", callback_data="show_leagues"),
+            InlineKeyboardButton(text="🔄 Коллекция", callback_data="show_collection")
+        ],
+        [
+            InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile"),
+            InlineKeyboardButton(text="⭐ Рейтинг", callback_data="show_rating")
+        ],
+        [
+            InlineKeyboardButton(text="❓ Помощь", callback_data="show_help")
+        ]
+    ])
     return keyboard
 
-# Клавиатура для выбора команды
+# Клавиатура для выбора команды для просмотра состава
 def get_team_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -70,7 +66,7 @@ def get_team_keyboard():
             InlineKeyboardButton(text="🦅 Красные Орлы", callback_data="team_red")
         ],
         [
-            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
         ]
     ])
     return keyboard
@@ -83,7 +79,7 @@ def get_match_team_keyboard():
             InlineKeyboardButton(text="🦅 Красные Орлы", callback_data="match_red")
         ],
         [
-            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
         ]
     ])
     return keyboard
@@ -107,7 +103,7 @@ class MatchManager:
         self.team_b = team_b
         self.match = HockeyMatch(team_a, team_b)
         self.current_episode = 0
-        self.total_episodes = 30  # 10 эпизодов * 3 тайма
+        self.total_episodes = 30
         self.episodes = []
         self.is_finished = False
         self.generate_episodes()
@@ -115,11 +111,8 @@ class MatchManager:
     def generate_episodes(self):
         """Генерирует эпизоды матча"""
         self.episodes = []
-        period = 1
-        episode_in_period = 0
         
         for i in range(self.total_episodes):
-            # Определяем период
             if i < 10:
                 period = 1
                 episode_in_period = i + 1
@@ -130,13 +123,9 @@ class MatchManager:
                 period = 3
                 episode_in_period = i - 19
             
-            # Генерируем время эпизода (от 0 до 20 минут)
             minutes = random.randint(0, 20)
+            event = self.generate_event()
             
-            # Генерируем событие
-            event = self.generate_event(period, minutes, episode_in_period)
-            
-            # Проверка на конец периода
             if episode_in_period == 10:
                 event = f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА!\n📊 Счёт: {self.match.team_a_name} {self.match.score_a} - {self.match.score_b} {self.match.team_b_name}"
             
@@ -148,18 +137,12 @@ class MatchManager:
                 'is_period_end': episode_in_period == 10
             })
     
-    def generate_event(self, period, minutes, episode):
+    def generate_event(self):
         """Генерирует случайное событие матча"""
-        event_types = [
-            'goal_a', 'goal_b', 'penalty_a', 'penalty_b',
-            'shot_a', 'shot_b', 'faceoff', 'save_a', 'save_b'
-        ]
-        
-        # Вероятность событий
+        event_types = ['goal_a', 'goal_b', 'penalty_a', 'penalty_b', 'shot_a', 'shot_b', 'faceoff', 'save_a', 'save_b']
         weights = [15, 15, 8, 8, 20, 20, 10, 2, 2]
         event_type = random.choices(event_types, weights=weights)[0]
         
-        # Получаем игроков
         players_a = self.match.team_a_on_ice
         players_b = self.match.team_b_on_ice
         
@@ -203,21 +186,18 @@ class MatchManager:
             return f"🔄 Вбрасывание в центре поля"
     
     def get_next_episode(self):
-        """Возвращает следующий эпизод"""
         if self.current_episode >= self.total_episodes:
             return None
         
         episode = self.episodes[self.current_episode]
         self.current_episode += 1
         
-        # Проверяем, закончился ли матч
         if self.current_episode >= self.total_episodes:
             self.is_finished = True
         
         return episode
     
     def get_final_result(self):
-        """Возвращает финальный результат"""
         winner = None
         if self.match.score_a > self.match.score_b:
             winner = self.match.team_a_name
@@ -250,7 +230,6 @@ async def show_team(message: types.Message, team_name: str):
         team_name_display = team_data.get('team_name', team_name)
         coach = team_data.get('coach', 'Неизвестно')
         
-        # Разделяем основной состав и запасных
         main_players = [p for p in players if p.get('is_main', False)]
         reserve_players = [p for p in players if not p.get('is_main', False)]
         
@@ -259,33 +238,27 @@ async def show_team(message: types.Message, team_name: str):
         defenders = get_players_by_position(main_players, "защитник")
         forwards = get_players_by_position(main_players, "нападающий")
         
-        icon = "🦅"
-        
-        text = f"{icon} <b>{team_name_display.upper()}</b>\n"
+        text = f"🦅 <b>{team_name_display.upper()}</b>\n"
         text += f"👨‍🏫 Тренер: {coach}\n\n"
-        
         text += "🔴 <b>ОСНОВНОЙ СОСТАВ (6 игроков)</b>\n\n"
         
         if goalies:
             text += "🥅 <b>Вратари:</b>\n"
             for p in goalies:
                 surname = p.get('surname', '')
-                line = p.get('line', '')
-                text += f"  #{p['number']} {p['name']} {surname} (Звено {line})\n"
+                text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
         
         if defenders:
             text += "\n🛡️ <b>Защитники:</b>\n"
             for p in defenders:
                 surname = p.get('surname', '')
-                line = p.get('line', '')
-                text += f"  #{p['number']} {p['name']} {surname} (Звено {line})\n"
+                text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
         
         if forwards:
             text += "\n⚡ <b>Нападающие:</b>\n"
             for p in forwards:
                 surname = p.get('surname', '')
-                line = p.get('line', '')
-                text += f"  #{p['number']} {p['name']} {surname} (Звено {line})\n"
+                text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
         
         if reserve_players:
             text += f"\n🔄 <b>Запасные ({len(reserve_players)} игроков)</b>\n"
@@ -295,7 +268,8 @@ async def show_team(message: types.Message, team_name: str):
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="🔄 Показать другую команду", callback_data="show_teams")
+                InlineKeyboardButton(text="🔄 Показать другую команду", callback_data="show_team"),
+                InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")
             ]
         ])
         
@@ -307,7 +281,7 @@ async def show_team(message: types.Message, team_name: str):
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    """Команда /start - показывает главное меню с кнопками"""
+    """Команда /start - показывает главное меню с инлайн-кнопками"""
     welcome_text = (
         "🏒 <b>Добро пожаловать в хоккейный бот!</b>\n\n"
         "🎮 Выберите действие из меню ниже:\n\n"
@@ -316,12 +290,13 @@ async def cmd_start(message: types.Message):
         "🏆 Лиги - информация о лигах\n"
         "🔄 Коллекция - все игроки\n"
         "👤 Профиль - ваш профиль\n"
+        "⭐ Рейтинг - рейтинг команд\n"
         "❓ Помощь - справка"
     )
     await message.answer(
         welcome_text,
         parse_mode="HTML",
-        reply_markup=get_main_menu()  # Отправляем меню с кнопками
+        reply_markup=get_main_menu()
     )
 
 @dp.message(Command("menu"))
@@ -333,189 +308,204 @@ async def cmd_menu(message: types.Message):
         reply_markup=get_main_menu()
     )
 
-# Обработчики кнопок меню
-@dp.message(lambda message: message.text == "🏒 Сыграть матч")
-async def play_match(message: types.Message):
-    """Кнопка Играть матч"""
-    await message.answer(
-        "🏒 <b>Выберите команду за которую будете играть:</b>",
-        parse_mode="HTML",
-        reply_markup=get_match_team_keyboard()
-    )
-
-@dp.message(lambda message: message.text == "📋 Состав команды")
-async def show_team_menu(message: types.Message):
-    """Кнопка Состав команды"""
-    await message.answer(
-        "📋 <b>Выберите команду для просмотра состава:</b>",
-        parse_mode="HTML",
-        reply_markup=get_team_keyboard()
-    )
-
-@dp.message(lambda message: message.text == "🏆 Лиги")
-async def show_leagues(message: types.Message):
-    """Кнопка Лиги"""
-    text = (
-        "🏆 <b>ХОККЕЙНЫЕ ЛИГИ</b>\n\n"
-        "📍 <b>КХЛ (Континентальная Хоккейная Лига)</b>\n"
-        "• Страны: Россия, Беларусь, Казахстан, Китай\n"
-        "• Количество команд: 23\n"
-        "• Главный приз: Кубок Гагарина\n"
-        "• Сезон: Регулярный чемпионат → Плей-офф\n\n"
-        "📌 <b>Другие лиги в разработке:</b>\n"
-        "• 🏒 НХЛ (Национальная Хоккейная Лига)\n"
-        "• 🏒 ВХЛ (Высшая Хоккейная Лига)\n"
-        "• 🏒 МХЛ (Молодёжная Хоккейная Лига)\n\n"
-        "⚡ Регулярный чемпионат: команды играют друг с другом за очки\n"
-        "🏆 Плей-офф: матчи на выбывание, победитель получает Кубок"
-    )
-    await message.answer(text, parse_mode="HTML")
-
-@dp.message(lambda message: message.text == "🔄 Коллекция")
-async def show_collection(message: types.Message):
-    """Кнопка Коллекция"""
-    try:
-        players = load_players()
-        
-        text = "🔄 <b>КОЛЛЕКЦИЯ ИГРОКОВ</b>\n\n"
-        
-        # Группируем по командам
-        teams = {}
-        for player in players:
-            team = player.get('team', 'Неизвестно')
-            if team not in teams:
-                teams[team] = []
-            teams[team].append(player)
-        
-        for team_name, team_players in teams.items():
-            main_players = [p for p in team_players if p.get('is_main', False)]
-            reserve_players = [p for p in team_players if not p.get('is_main', False)]
-            
-            text += f"🏒 <b>{team_name}</b>\n"
-            text += f"   Основной состав: {len(main_players)} игроков\n"
-            text += f"   Запасные: {len(reserve_players)} игроков\n"
-            text += f"   Всего: {len(team_players)} игроков\n\n"
-        
-        # Добавляем общую статистику
-        total_players = len(players)
-        total_main = len([p for p in players if p.get('is_main', False)])
-        total_reserve = total_players - total_main
-        
-        text += "📊 <b>Общая статистика:</b>\n"
-        text += f"   Всего игроков: {total_players}\n"
-        text += f"   В основном составе: {total_main}\n"
-        text += f"   В запасе: {total_reserve}\n"
-        
-        await message.answer(text, parse_mode="HTML")
-    
-    except Exception as e:
-        logging.error(f"Ошибка в show_collection: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {str(e)}")
-
-@dp.message(lambda message: message.text == "👤 Профиль")
-async def show_profile(message: types.Message):
-    """Кнопка Профиль"""
-    # Временный профиль пользователя
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    
-    text = (
-        f"👤 <b>ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ</b>\n\n"
-        f"📌 Имя: {username}\n"
-        f"🆔 ID: {user_id}\n\n"
-        f"📊 <b>Статистика:</b>\n"
-        f"🏒 Сыграно матчей: 0\n"
-        f"🏆 Побед: 0\n"
-        f"⚽ Голов забито: 0\n"
-        f"🔄 Передач: 0\n\n"
-        f"⭐ Рейтинг: 1000\n"
-        f"🏆 Кубков: 0\n\n"
-        f"📅 Дата регистрации: {message.date.strftime('%d.%m.%Y')}"
-    )
-    await message.answer(text, parse_mode="HTML")
-
-@dp.message(lambda message: message.text == "❓ Помощь")
-async def show_help(message: types.Message):
-    """Кнопка Помощь"""
-    help_text = (
-        "📋 <b>Доступные команды:</b>\n\n"
-        "🏒 <b>Сыграть матч</b> - начать матч между командами\n"
-        "📋 <b>Состав команды</b> - просмотр состава команд\n"
-        "🏆 <b>Лиги</b> - информация о хоккейных лигах\n"
-        "🔄 <b>Коллекция</b> - все игроки команд\n"
-        "👤 <b>Профиль</b> - ваш профиль\n"
-        "❓ <b>Помощь</b> - это сообщение\n\n"
-        "📌 <b>Дополнительные команды:</b>\n"
-        "/menu - Показать главное меню\n"
-        "/player [номер] - Карточка игрока\n\n"
-        "🏒 <b>Доступные команды:</b>\n"
-        "🦅 Чёрные Вороны (тренер: Ивашка Тупоголовый)\n"
-        "🦅 Красные Орлы (тренер: Павел Ихтиандрович)"
-    )
-    await message.answer(help_text, parse_mode="HTML")
-
 @dp.callback_query()
 async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
     """Обработка нажатий на инлайн кнопки"""
     await callback.answer()
     
-    if callback.data == "team_black":
-        await show_team(callback.message, "Чёрные Вороны")
+    # Главное меню
+    if callback.data == "back_to_menu":
         await callback.message.delete()
-    
-    elif callback.data == "team_red":
-        await show_team(callback.message, "Красные Орлы")
-        await callback.message.delete()
-    
-    elif callback.data == "match_black":
-        await start_match(callback.message, "Чёрные Вороны", "Красные Орлы", "Чёрные Вороны")
-        await callback.message.delete()
-    
-    elif callback.data == "match_red":
-        await start_match(callback.message, "Красные Орлы", "Чёрные Вороны", "Красные Орлы")
-        await callback.message.delete()
-    
-    elif callback.data == "show_teams":
         await callback.message.answer(
+            "🏒 <b>Главное меню:</b>",
+            parse_mode="HTML",
+            reply_markup=get_main_menu()
+        )
+    
+    elif callback.data == "show_help":
+        help_text = (
+            "📋 <b>Доступные команды:</b>\n\n"
+            "🏒 <b>Сыграть матч</b> - начать матч между командами\n"
+            "📋 <b>Состав команды</b> - просмотр состава команд\n"
+            "🏆 <b>Лиги</b> - информация о хоккейных лигах\n"
+            "🔄 <b>Коллекция</b> - все игроки команд\n"
+            "👤 <b>Профиль</b> - ваш профиль\n"
+            "⭐ <b>Рейтинг</b> - рейтинг команд\n\n"
+            "📌 <b>Дополнительные команды:</b>\n"
+            "/menu - Показать главное меню\n"
+            "/player [номер] - Карточка игрока\n\n"
+            "🏒 <b>Доступные команды:</b>\n"
+            "🦅 Чёрные Вороны (тренер: Ивашка Тупоголовый)\n"
+            "🦅 Красные Орлы (тренер: Павел Ихтиандрович)"
+        )
+        await callback.message.edit_text(help_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        ]))
+    
+    elif callback.data == "show_rating":
+        try:
+            teams = get_all_teams()
+            if not teams:
+                await callback.message.edit_text("❌ Команды не найдены!")
+                return
+            
+            text = "⭐ <b>РЕЙТИНГ КОМАНД</b>\n\n"
+            
+            team_ratings = []
+            for team in teams:
+                players = team.get('players', [])
+                main_players = [p for p in players if p.get('is_main', False)]
+                if main_players:
+                    total = sum(p['stats'].get('рейтинг', 0) for p in main_players[:6])
+                    rating = round(total / 6, 1)
+                else:
+                    rating = 0
+                team_ratings.append({
+                    'name': team.get('team_name', 'Неизвестно'),
+                    'rating': rating
+                })
+            
+            team_ratings.sort(key=lambda x: x['rating'], reverse=True)
+            
+            for i, team in enumerate(team_ratings, 1):
+                medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+                text += f"{medal} <b>{team['name']}</b> - {team['rating']}\n"
+            
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+            ]))
+        except Exception as e:
+            logging.error(f"Ошибка в show_rating: {e}", exc_info=True)
+            await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
+    
+    elif callback.data == "show_profile":
+        user_id = callback.from_user.id
+        username = callback.from_user.username or callback.from_user.first_name
+        
+        text = (
+            f"👤 <b>ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ</b>\n\n"
+            f"📌 Имя: {username}\n"
+            f"🆔 ID: {user_id}\n\n"
+            f"📊 <b>Статистика:</b>\n"
+            f"🏒 Сыграно матчей: 0\n"
+            f"🏆 Побед: 0\n"
+            f"⚽ Голов забито: 0\n"
+            f"🔄 Передач: 0\n\n"
+            f"⭐ Рейтинг: 1000\n"
+            f"🏆 Кубков: 0"
+        )
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        ]))
+    
+    elif callback.data == "show_collection":
+        try:
+            players = load_players()
+            
+            text = "🔄 <b>КОЛЛЕКЦИЯ ИГРОКОВ</b>\n\n"
+            
+            teams = {}
+            for player in players:
+                team = player.get('team', 'Неизвестно')
+                if team not in teams:
+                    teams[team] = []
+                teams[team].append(player)
+            
+            for team_name, team_players in teams.items():
+                main_players = [p for p in team_players if p.get('is_main', False)]
+                reserve_players = [p for p in team_players if not p.get('is_main', False)]
+                
+                text += f"🏒 <b>{team_name}</b>\n"
+                text += f"   Основной состав: {len(main_players)} игроков\n"
+                text += f"   Запасные: {len(reserve_players)} игроков\n"
+                text += f"   Всего: {len(team_players)} игроков\n\n"
+            
+            total_players = len(players)
+            total_main = len([p for p in players if p.get('is_main', False)])
+            total_reserve = total_players - total_main
+            
+            text += "📊 <b>Общая статистика:</b>\n"
+            text += f"   Всего игроков: {total_players}\n"
+            text += f"   В основном составе: {total_main}\n"
+            text += f"   В запасе: {total_reserve}\n"
+            
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+            ]))
+        except Exception as e:
+            logging.error(f"Ошибка в show_collection: {e}", exc_info=True)
+            await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
+    
+    elif callback.data == "show_leagues":
+        text = (
+            "🏆 <b>ХОККЕЙНЫЕ ЛИГИ</b>\n\n"
+            "📍 <b>КХЛ (Континентальная Хоккейная Лига)</b>\n"
+            "• Страны: Россия, Беларусь, Казахстан, Китай\n"
+            "• Количество команд: 23\n"
+            "• Главный приз: Кубок Гагарина\n"
+            "• Сезон: Регулярный чемпионат → Плей-офф\n\n"
+            "📌 <b>Другие лиги в разработке:</b>\n"
+            "• 🏒 НХЛ (Национальная Хоккейная Лига)\n"
+            "• 🏒 ВХЛ (Высшая Хоккейная Лига)\n"
+            "• 🏒 МХЛ (Молодёжная Хоккейная Лига)\n\n"
+            "⚡ Регулярный чемпионат: команды играют друг с другом за очки\n"
+            "🏆 Плей-офф: матчи на выбывание, победитель получает Кубок"
+        )
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        ]))
+    
+    elif callback.data == "show_team":
+        await callback.message.edit_text(
             "📋 <b>Выберите команду для просмотра состава:</b>",
             parse_mode="HTML",
             reply_markup=get_team_keyboard()
         )
     
+    elif callback.data == "play_match":
+        await callback.message.edit_text(
+            "🏒 <b>Выберите команду за которую будете играть:</b>",
+            parse_mode="HTML",
+            reply_markup=get_match_team_keyboard()
+        )
+    
+    # Выбор команды для просмотра состава
+    elif callback.data == "team_black":
+        await show_team(callback.message, "Чёрные Вороны")
+    
+    elif callback.data == "team_red":
+        await show_team(callback.message, "Красные Орлы")
+    
+    # Выбор команды для матча
+    elif callback.data == "match_black":
+        await start_match(callback.message, "Чёрные Вороны", "Красные Орлы")
+    
+    elif callback.data == "match_red":
+        await start_match(callback.message, "Красные Орлы", "Чёрные Вороны")
+    
+    # Управление матчем
     elif callback.data == "next_episode":
         await show_next_episode(callback.message)
     
     elif callback.data == "end_match":
         await end_match(callback.message)
-    
-    elif callback.data == "cancel":
-        await callback.message.answer(
-            "❌ Действие отменено.",
-            reply_markup=get_main_menu()
-        )
-        await callback.message.delete()
-        await state.clear()
 
-async def start_match(message: types.Message, team_a_name: str, team_b_name: str, user_team: str):
+async def start_match(message: types.Message, team_a_name: str, team_b_name: str):
     """Запускает матч с пошаговым показом"""
     try:
-        # Загружаем данные команд
         team_a = load_team_by_name(team_a_name)
         team_b = load_team_by_name(team_b_name)
         
         if not team_a or not team_b:
-            await message.answer("❌ Одна из команд не найдена!")
+            await message.edit_text("❌ Одна из команд не найдена!")
             return
         
-        # Создаем менеджер матча
         match_manager = MatchManager(team_a, team_b)
         
-        # Сохраняем в активные матчи
         chat_id = message.chat.id
         active_matches[chat_id] = match_manager
         
-        # Отправляем сообщение о начале матча
-        await message.answer(
+        await message.edit_text(
             f"🏒 <b>МАТЧ НАЧИНАЕТСЯ!</b>\n\n"
             f"⚔️ {team_a_name} vs {team_b_name}\n"
             f"📊 Рейтинг {team_a_name}: {match_manager.match.team_a_rating}\n"
@@ -524,30 +514,27 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
             parse_mode="HTML"
         )
         
-        # Показываем первый эпизод
         await show_next_episode(message)
         
     except Exception as e:
         logging.error(f"Ошибка в start_match: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка при проведении матча: {str(e)}")
+        await message.edit_text(f"❌ Ошибка при проведении матча: {str(e)}")
 
 async def show_next_episode(message: types.Message):
     """Показывает следующий эпизод матча"""
     chat_id = message.chat.id
     
     if chat_id not in active_matches:
-        await message.answer("❌ Матч не найден!")
+        await message.edit_text("❌ Матч не найден!")
         return
     
     match_manager = active_matches[chat_id]
     episode = match_manager.get_next_episode()
     
     if episode is None:
-        # Матч закончился
         await end_match(message)
         return
     
-    # Формируем текст эпизода
     period_names = {1: "ПЕРВЫЙ", 2: "ВТОРОЙ", 3: "ТРЕТИЙ"}
     period_name = period_names.get(episode['period'], str(episode['period']))
     
@@ -555,26 +542,24 @@ async def show_next_episode(message: types.Message):
     text += f"⏱️ {episode['minutes']}' минута\n\n"
     text += episode['event']
     
-    # Проверка на конец периода
     if episode['is_period_end'] and episode['episode'] == 10:
         text += f"\n\n📊 Счёт после периода: {match_manager.match.team_a_name} {match_manager.match.score_a} - {match_manager.match.score_b} {match_manager.match.team_b_name}"
         text += "\n\n⏸️ ПЕРЕРЫВ 15 МИНУТ"
     elif episode['period'] == 3 and episode['episode'] == 10:
         text += f"\n\n🏁 КОНЕЦ МАТЧА!\n\n📊 Финальный счёт: {match_manager.match.team_a_name} {match_manager.match.score_a} - {match_manager.match.score_b} {match_manager.match.team_b_name}"
     
-    # Проверяем, закончился ли матч
     if match_manager.is_finished:
-        await message.answer(text, parse_mode="HTML")
+        await message.edit_text(text, parse_mode="HTML")
         await end_match(message)
     else:
-        await message.answer(text, parse_mode="HTML", reply_markup=get_match_control_keyboard())
+        await message.edit_text(text, parse_mode="HTML", reply_markup=get_match_control_keyboard())
 
 async def end_match(message: types.Message):
     """Завершает матч и показывает результат"""
     chat_id = message.chat.id
     
     if chat_id not in active_matches:
-        await message.answer("❌ Матч не найден!")
+        await message.edit_text("❌ Матч не найден!")
         return
     
     match_manager = active_matches[chat_id]
@@ -593,17 +578,11 @@ async def end_match(message: types.Message):
     text += f"• {result['team_a']}: {result['rating_a']}\n"
     text += f"• {result['team_b']}: {result['rating_b']}\n"
     
-    # Удаляем матч из активных
     del active_matches[chat_id]
     
-    await message.answer(text, parse_mode="HTML")
-    
-    # Возвращаем главное меню
-    await message.answer(
-        "🏒 <b>Главное меню:</b>",
-        parse_mode="HTML",
-        reply_markup=get_main_menu()
-    )
+    await message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_menu")]
+    ]))
 
 @dp.message(Command("player"))
 async def cmd_player(message: types.Message):
@@ -666,15 +645,6 @@ async def cmd_player(message: types.Message):
     except Exception as e:
         logging.error(f"Ошибка в /player: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {str(e)}")
-
-@dp.message()
-async def unknown_command(message: types.Message):
-    """Обработка неизвестных команд"""
-    await message.answer(
-        "❌ Неизвестная команда.\n"
-        "Используйте меню для навигации.",
-        reply_markup=get_main_menu()
-    )
 
 async def main():
     """Главная функция запуска бота"""
