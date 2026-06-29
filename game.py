@@ -4,83 +4,27 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG)
 
-def get_all_teams():
-    """Возвращает список всех команд"""
-    try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(current_dir, 'players.json')
-        
-        logging.info(f"Загрузка файла: {file_path}")
-        
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        logging.info(f"Тип данных: {type(data)}")
-        
-        # Если это список команд
-        if isinstance(data, list):
-            return data
-        # Если это одна команда
-        elif isinstance(data, dict) and 'team_name' in data:
-            return [data]
-        return []
-    except Exception as e:
-        logging.error(f"Ошибка загрузки команд: {e}", exc_info=True)
-        return []
-
 def load_team_by_name(team_name):
     """Загружает данные конкретной команды по названию"""
     try:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         file_path = os.path.join(current_dir, 'players.json')
         
-        logging.info(f"Поиск команды: {team_name}")
-        logging.info(f"Путь к файлу: {file_path}")
-        
-        # Проверяем существование файла
-        if not os.path.exists(file_path):
-            logging.error(f"Файл не найден: {file_path}")
-            return None
-        
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        logging.info(f"Тип данных в файле: {type(data)}")
-        logging.info(f"Содержимое: {data}")
-        
-        # Если данные - это список команд
         if isinstance(data, list):
-            logging.info(f"Это список из {len(data)} команд")
             for team in data:
-                logging.info(f"Проверяем команду: {team.get('team_name')}")
                 if team.get('team_name') == team_name:
-                    logging.info(f"Команда найдена: {team}")
                     return team
-            logging.warning(f"Команда '{team_name}' не найдена в списке!")
-            return None
-        
-        # Если данные - это одна команда
         elif isinstance(data, dict):
-            logging.info("Это одна команда")
             if data.get('team_name') == team_name:
-                logging.info(f"Команда найдена: {data}")
                 return data
-            else:
-                logging.warning(f"Имя команды не совпадает: {data.get('team_name')} != {team_name}")
-                return None
         
-        else:
-            logging.error(f"Неизвестный тип данных: {type(data)}")
-            return None
-            
-    except FileNotFoundError:
-        logging.error(f"Файл players.json не найден!")
         return None
-    except json.JSONDecodeError as e:
-        logging.error(f"Ошибка в формате JSON файла: {e}", exc_info=True)
-        return None
+        
     except Exception as e:
-        logging.error(f"Неизвестная ошибка: {e}", exc_info=True)
+        logging.error(f"Ошибка загрузки: {e}", exc_info=True)
         return None
 
 def load_players():
@@ -94,28 +38,19 @@ def load_players():
         
         all_players = []
         
-        # Если это список команд
         if isinstance(data, list):
             for team in data:
                 players = team.get('players', [])
-                team_name = team.get('team_name', 'Неизвестно')
                 for p in players:
-                    p['team'] = team_name
+                    p['team'] = team.get('team_name', 'Неизвестно')
                 all_players.extend(players)
-            logging.info(f"Загружено {len(all_players)} игроков из {len(data)} команд")
-            return all_players
-        
-        # Если это одна команда
-        elif isinstance(data, dict) and 'players' in data:
-            players = data['players']
-            team_name = data.get('team_name', 'Неизвестно')
+        elif isinstance(data, dict):
+            players = data.get('players', [])
             for p in players:
-                p['team'] = team_name
-            logging.info(f"Загружено {len(players)} игроков из одной команды")
-            return players
+                p['team'] = data.get('team_name', 'Неизвестно')
+            all_players = players
         
-        logging.warning("Не удалось загрузить игроков")
-        return []
+        return all_players
         
     except Exception as e:
         logging.error(f"Ошибка загрузки игроков: {e}", exc_info=True)
@@ -126,8 +61,36 @@ def get_players_by_position(players, position):
     return [p for p in players if p.get('position') == position]
 
 def get_player_by_id(players, player_id):
-    """Возвращает игрока по ID (ищет во всех командах)"""
+    """Возвращает игрока по ID"""
     for player in players:
         if player.get('id') == player_id:
             return player
     return None
+
+def get_all_teams():
+    """Возвращает список всех команд"""
+    try:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(current_dir, 'players.json')
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            return [data]
+        return []
+    except Exception as e:
+        logging.error(f"Ошибка загрузки команд: {e}", exc_info=True)
+        return []
+
+def get_main_players(team_data):
+    """Возвращает основной состав команды"""
+    players = team_data.get('players', [])
+    return [p for p in players if p.get('is_main', False)]
+
+def get_reserve_players(team_data):
+    """Возвращает запасных игроков команды"""
+    players = team_data.get('players', [])
+    return [p for p in players if not p.get('is_main', False)]
