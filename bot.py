@@ -4,7 +4,7 @@ import os
 import sys
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -36,7 +36,7 @@ dp = Dispatcher(storage=storage)
 class TeamChoice(StatesGroup):
     selecting = State()
 
-# Главное меню
+# ГЛАВНОЕ МЕНЮ - кнопки внизу экрана
 def get_main_menu():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
@@ -49,11 +49,12 @@ def get_main_menu():
                 KeyboardButton(text="❓ Помощь")
             ]
         ],
-        resize_keyboard=True
+        resize_keyboard=True,  # Автоматически подгоняет размер кнопок
+        one_time_keyboard=False  # Кнопки остаются после нажатия
     )
     return keyboard
 
-# Клавиатура для выбора команды
+# Клавиатура для выбора команды (инлайн кнопки под сообщением)
 def get_team_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -66,7 +67,7 @@ def get_team_keyboard():
     ])
     return keyboard
 
-# Клавиатура для выбора команды для матча
+# Клавиатура для выбора команды для матча (инлайн кнопки под сообщением)
 def get_match_team_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -146,15 +147,24 @@ async def show_team(message: types.Message, team_name: str):
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
-    """Команда /start - приветствие"""
+    """Команда /start - приветствие с меню"""
     await state.set_state(TeamChoice.selecting)
     await message.answer(
         "🏒 <b>Добро пожаловать в хоккейный бот!</b>\n\n"
         "Выберите действие из меню ниже:",
         parse_mode="HTML",
-        reply_markup=get_main_menu()
+        reply_markup=get_main_menu()  # <-- Здесь отправляем меню!
     )
 
+@dp.message(Command("menu"))
+async def cmd_menu(message: types.Message):
+    """Команда /menu - показать меню"""
+    await message.answer(
+        "📋 <b>Главное меню:</b>",
+        parse_mode="HTML",
+        reply_markup=get_main_menu()
+    )
+    
 @dp.message(lambda message: message.text == "🏒 Сыграть матч")
 async def play_match(message: types.Message):
     """Кнопка Сыграть матч"""
@@ -205,7 +215,8 @@ async def show_help(message: types.Message):
         "📌 <b>Дополнительные команды:</b>\n"
         "/team_black - Состав Чёрных Воронов\n"
         "/team_red - Состав Красных Орлов\n"
-        "/player [номер] - Карточка игрока\n\n"
+        "/player [номер] - Карточка игрока\n"
+        "/menu - Показать главное меню\n\n"
         "🏒 <b>Доступные команды:</b>\n"
         "🦅 Чёрные Вороны (тренер: Ивашка Тупоголовый)\n"
         "🦅 Красные Орлы (тренер: Павел Ихтиандрович)"
@@ -241,7 +252,10 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
         )
     
     elif callback.data == "cancel":
-        await callback.message.answer("❌ Действие отменено.")
+        await callback.message.answer(
+            "❌ Действие отменено.",
+            reply_markup=get_main_menu()  # Возвращаем главное меню
+        )
         await callback.message.delete()
         await state.clear()
 
@@ -292,14 +306,25 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
         
         await message.answer(report, parse_mode="HTML")
         
-        # Полный лог событий (опционально)
-        # full_log = match.get_events_log(limit=50)
-        # await message.answer(f"📋 Полный лог матча:\n{full_log}", parse_mode="HTML")
+        # Возвращаем главное меню после матча
+        await message.answer(
+            "🏒 <b>Главное меню:</b>",
+            parse_mode="HTML",
+            reply_markup=get_main_menu()
+        )
         
     except Exception as e:
         logging.error(f"Ошибка в start_match: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при проведении матча: {str(e)}")
 
+@dp.message(Command("menu"))
+async def cmd_menu(message: types.Message):
+    """Команда /menu - показать главное меню"""
+    await message.answer(
+        "📋 <b>Главное меню:</b>",
+        parse_mode="HTML",
+        reply_markup=get_main_menu()
+    )
 @dp.message(Command("team_black"))
 async def cmd_team_black(message: types.Message):
     """Показывает состав Чёрных Воронов"""
