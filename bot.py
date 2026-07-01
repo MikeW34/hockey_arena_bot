@@ -37,9 +37,8 @@ dp = Dispatcher(storage=storage)
 class UserStates(StatesGroup):
     waiting_for_team_name = State()
     waiting_for_match = State()
-    waiting_for_player_replace = State()
 
-# ГЛАВНОЕ МЕНЮ - всегда внизу
+# ГЛАВНОЕ МЕНЮ
 def get_main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -123,9 +122,11 @@ class MatchManager:
         self.team_b_name = team_b['team_name']
         self.score_a = 0
         self.score_b = 0
-        self.periods = []
+        self.episodes = []
         self.current_episode = 0
-        self.total_episodes = 30
+        self.total_episodes_per_period = 6  # 6 эпизодов в периоде
+        self.total_periods = 3
+        self.total_episodes = self.total_periods * self.total_episodes_per_period
         self.is_finished = False
         self.period_scores = []
         self.key_events = []
@@ -133,7 +134,7 @@ class MatchManager:
         self.rating_a = self.calculate_team_rating(team_a)
         self.rating_b = self.calculate_team_rating(team_b)
         
-        self.generate_periods()
+        self.generate_episodes()
     
     def calculate_team_rating(self, team):
         players = team.get('players', [])
@@ -143,231 +144,185 @@ class MatchManager:
             return round(total / 6, 1)
         return 0
     
-    def generate_periods(self):
-        self.periods = []
+    def generate_episodes(self):
+        """Генерирует все эпизоды матча"""
+        self.episodes = []
         
-        for i in range(30):
-            period = (i // 10) + 1
-            episode_in_period = (i % 10) + 1
-            minutes = episode_in_period * 2
+        for period in range(1, self.total_periods + 1):
+            period_episodes = []
             
-            event, key = self.generate_event(period, minutes)
-            
-            if key:
-                self.key_events.append({
+            for ep_num in range(1, self.total_episodes_per_period + 1):
+                minutes = (ep_num - 1) * 2 + 1
+                events = self.generate_events_for_episode(period, minutes)
+                
+                period_episodes.append({
                     'period': period,
+                    'episode': ep_num,
+                    'total_in_period': self.total_episodes_per_period,
                     'time': f"{minutes}'",
-                    'event': event
+                    'events': events
                 })
             
-            self.periods.append({
+            # Добавляем конец периода
+            period_episodes.append({
                 'period': period,
-                'time': f"{minutes}'",
-                'episode': episode_in_period,
-                'event': event,
-                'is_key': key
+                'episode': 'end',
+                'total_in_period': self.total_episodes_per_period,
+                'time': "20'",
+                'events': [f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА!"],
+                'is_period_end': True
             })
             
-            if episode_in_period == 10:
-                self.periods.append({
-                    'period': period,
-                    'time': f"20'",
-                    'episode': episode_in_period,
-                    'event': f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА!",
-                    'is_key': True,
-                    'is_period_end': True
-                })
-                
-                self.period_scores.append({
-                    'period': period,
-                    'score_a': self.score_a,
-                    'score_b': self.score_b
-                })
+            self.period_scores.append({
+                'period': period,
+                'score_a': self.score_a,
+                'score_b': self.score_b
+            })
+            
+            self.episodes.extend(period_episodes)
     
-    def generate_event(self, period, minutes):
-        """Генерирует событие матча"""
-        rating_diff = abs(self.rating_a - self.rating_b)
-        underdog_chance = min(0.3, rating_diff / 200)
+    def generate_events_for_episode(self, period, minutes):
+        """Генерирует 3-4 события для одного эпизода"""
+        events = []
+        num_events = random.randint(3, 4)
         
-        if self.rating_a < self.rating_b:
-            weaker_team = 'A'
+        # Определяем, кто начинает атаку
+        if random.random() < self.rating_a / (self.rating_a + self.rating_b):
+            attacking_team = 'A'
         else:
-            weaker_team = 'B'
+            attacking_team = 'B'
         
-        # Все возможные события
-        event_types = ['goal', 'penalty', 'shot', 'save', 'faceoff', 'duel', 'pass', 'tackle', 'offside', 'throw_in']
-        weights = [8, 10, 20, 12, 12, 8, 12, 8, 5, 5]
-        
-        if random.random() < underdog_chance and random.random() < 0.3:
-            if weaker_team == 'A':
-                return self.create_goal_event('A'), True
-            else:
-                return self.create_goal_event('B'), True
-        
-        event_type = random.choices(event_types, weights=weights)[0]
-        
-        if event_type == 'goal':
-            if random.random() < self.rating_a / (self.rating_a + self.rating_b):
-                return self.create_goal_event('A'), True
-            else:
-                return self.create_goal_event('B'), True
-        
-        elif event_type == 'penalty':
-            return self.create_penalty_event(), False
-        
-        elif event_type == 'shot':
-            return self.create_shot_event(), False
-        
-        elif event_type == 'save':
-            return self.create_save_event(), False
-        
-        elif event_type == 'faceoff':
-            return self.create_faceoff_event(), False
-        
-        elif event_type == 'duel':
-            return self.create_duel_event(), True
-        
-        elif event_type == 'pass':
-            return self.create_pass_event(), False
-        
-        elif event_type == 'tackle':
-            return self.create_tackle_event(), False
-        
-        elif event_type == 'offside':
-            return self.create_offside_event(), False
-        
-        elif event_type == 'throw_in':
-            return self.create_throw_in_event(), False
-        
+        # Добавляем событие начала атаки
+        if attacking_team == 'A':
+            player = self.get_random_player('A', 'нападающий')
+            events.append(f"{self.team_a_name} начинает атаку; мяч у {player['name']} {player.get('surname', '')}")
         else:
-            return f"🔄 Вбрасывание в центре поля", False
+            player = self.get_random_player('B', 'нападающий')
+            events.append(f"{self.team_b_name} начинает атаку; мяч у {player['name']} {player.get('surname', '')}")
+        
+        # Генерируем остальные события
+        for i in range(num_events - 1):
+            event_type = random.choices(
+                ['dribble', 'pass', 'tackle', 'shot', 'save', 'goal', 'duel', 'offside'],
+                weights=[25, 20, 20, 15, 8, 5, 5, 2]
+            )[0]
+            
+            if event_type == 'dribble':
+                events.append(self.create_dribble_event(attacking_team))
+            elif event_type == 'pass':
+                events.append(self.create_pass_event(attacking_team))
+            elif event_type == 'tackle':
+                events.append(self.create_tackle_event())
+            elif event_type == 'shot':
+                events.append(self.create_shot_event(attacking_team))
+            elif event_type == 'save':
+                events.append(self.create_save_event())
+            elif event_type == 'goal':
+                goal_event = self.create_goal_event(attacking_team)
+                if goal_event:
+                    events.append(goal_event)
+                else:
+                    events.append(self.create_pass_event(attacking_team))
+            elif event_type == 'duel':
+                events.append(self.create_duel_event())
+            elif event_type == 'offside':
+                events.append(self.create_offside_event(attacking_team))
+        
+        return events
     
-    def create_goal_event(self, team):
+    def get_random_player(self, team, position=None):
+        """Получает случайного игрока из команды"""
         if team == 'A':
-            players = [p for p in self.team_a['players'] if p.get('is_main', False)]
-            scorer = random.choice([p for p in players if 'нападающий' in p['position']] or players)
-            self.score_a += 1
-            return f"🥅 ГОЛ! {scorer['name']} {scorer.get('surname', '')} ({self.team_a_name}) забивает!"
+            players = self.team_a['players']
+            team_name = self.team_a_name
         else:
-            players = [p for p in self.team_b['players'] if p.get('is_main', False)]
-            scorer = random.choice([p for p in players if 'нападающий' in p['position']] or players)
-            self.score_b += 1
-            return f"🥅 ГОЛ! {scorer['name']} {scorer.get('surname', '')} ({self.team_b_name}) забивает!"
+            players = self.team_b['players']
+            team_name = self.team_b_name
+        
+        main_players = [p for p in players if p.get('is_main', False)]
+        if position:
+            filtered = [p for p in main_players if position in p['position']]
+            if filtered:
+                return random.choice(filtered)
+        return random.choice(main_players) if main_players else random.choice(players)
     
-    def create_penalty_event(self):
-        team = random.choice(['A', 'B'])
-        if team == 'A':
-            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
-            mins = random.choices([2, 5, 10], weights=[70, 20, 10])[0]
-            return f"⛔ ШТРАФ {mins} МИН! {player['name']} {player.get('surname', '')} ({self.team_a_name})"
-        else:
-            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
-            mins = random.choices([2, 5, 10], weights=[70, 20, 10])[0]
-            return f"⛔ ШТРАФ {mins} МИН! {player['name']} {player.get('surname', '')} ({self.team_b_name})"
-    
-    def create_shot_event(self):
-        team = random.choice(['A', 'B'])
-        if team == 'A':
-            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
-            if not player:
-                player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
-            return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.team_a_name})"
-        else:
-            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
-            if not player:
-                player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
-            return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.team_b_name})"
-    
-    def create_save_event(self):
-        team = random.choice(['A', 'B'])
-        if team == 'A':
-            goalie = random.choice([p for p in self.team_a['players'] if p['position'] == 'вратарь'])
-            if not goalie:
-                goalie = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
-            return f"🧤 СЭЙВ! {goalie['name']} {goalie.get('surname', '')} ({self.team_a_name}) отражает бросок!"
-        else:
-            goalie = random.choice([p for p in self.team_b['players'] if p['position'] == 'вратарь'])
-            if not goalie:
-                goalie = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
-            return f"🧤 СЭЙВ! {goalie['name']} {goalie.get('surname', '')} ({self.team_b_name}) отражает бросок!"
-    
-    def create_faceoff_event(self):
-        zones = ['центральной', 'левой', 'правой']
-        zone = random.choice(zones)
-        team = random.choice(['A', 'B'])
+    def create_dribble_event(self, team):
+        """Создает событие дриблинга"""
+        player = self.get_random_player(team, 'нападающий')
         team_name = self.team_a_name if team == 'A' else self.team_b_name
-        return f"🔄 ВБРАСЫВАНИЕ! Выигрывает {team_name} в {zone} зоне"
+        return f"{player['name']} {player.get('surname', '')} идёт в дриблинг"
     
-    def create_pass_event(self):
-        team = random.choice(['A', 'B'])
-        if team == 'A':
-            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
-            return f"➡️ ПАС! {player['name']} {player.get('surname', '')} ({self.team_a_name}) отдает передачу"
-        else:
-            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
-            return f"➡️ ПАС! {player['name']} {player.get('surname', '')} ({self.team_b_name}) отдает передачу"
+    def create_pass_event(self, team):
+        """Создает событие паса"""
+        player = self.get_random_player(team)
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"{player['name']} {player.get('surname', '')} отдаёт пас"
     
     def create_tackle_event(self):
+        """Создает событие отбора"""
         team = random.choice(['A', 'B'])
+        player = self.get_random_player(team, 'защитник')
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"{player['name']} {player.get('surname', '')} отобрал мяч"
+    
+    def create_shot_event(self, team):
+        """Создает событие удара"""
+        player = self.get_random_player(team, 'нападающий')
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"{player['name']} {player.get('surname', '')} наносит удар по воротам"
+    
+    def create_save_event(self):
+        """Создает событие сэйва"""
+        team = random.choice(['A', 'B'])
+        player = self.get_random_player(team, 'вратарь')
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"СЭЙВ! {player['name']} {player.get('surname', '')} отражает удар"
+    
+    def create_goal_event(self, team):
+        """Создает событие гола"""
+        player = self.get_random_player(team, 'нападающий')
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        
         if team == 'A':
-            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'защитник' in p['position']])
-            if not player:
-                player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
-            return f"🛑 ОТБОР! {player['name']} {player.get('surname', '')} ({self.team_a_name}) перехватывает шайбу"
+            self.score_a += 1
         else:
-            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'защитник' in p['position']])
-            if not player:
-                player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
-            return f"🛑 ОТБОР! {player['name']} {player.get('surname', '')} ({self.team_b_name}) перехватывает шайбу"
-    
-    def create_offside_event(self):
-        team = random.choice(['A', 'B'])
-        team_name = self.team_a_name if team == 'A' else self.team_b_name
-        return f"🚩 ОФСАЙД! {team_name} попали в положение вне игры"
-    
-    def create_throw_in_event(self):
-        team = random.choice(['A', 'B'])
-        team_name = self.team_a_name if team == 'A' else self.team_b_name
-        return f"📤 ВБРАСЫВАНИЕ ИЗ-ЗА БОРТА! Вводит {team_name}"
+            self.score_b += 1
+        
+        return f"🥅 ГОЛ! {player['name']} {player.get('surname', '')} забивает! ({team_name})"
     
     def create_duel_event(self):
+        """Создает дуэль между игроками"""
         team = random.choice(['A', 'B'])
-        if team == 'A':
-            player1 = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
-            player2 = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'защитник' in p['position']])
-            team_name = self.team_a_name
-            if not player1 or not player2:
-                return f"⚔️ ДУЭЛЬ! ({team_name}) - игроки борются за шайбу"
-            if player1['stats']['рейтинг'] > player2['stats']['рейтинг']:
-                return f"⚔️ ДУЭЛЬ! {player1['name']} {player1.get('surname', '')} побеждает {player2['name']} {player2.get('surname', '')} ({team_name})!"
-            else:
-                return f"⚔️ ДУЭЛЬ! {player2['name']} {player2.get('surname', '')} побеждает {player1['name']} {player1.get('surname', '')} ({team_name})!"
-        else:
-            player1 = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
-            player2 = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'защитник' in p['position']])
-            team_name = self.team_b_name
-            if not player1 or not player2:
-                return f"⚔️ ДУЭЛЬ! ({team_name}) - игроки борются за шайбу"
-            if player1['stats']['рейтинг'] > player2['stats']['рейтинг']:
-                return f"⚔️ ДУЭЛЬ! {player1['name']} {player1.get('surname', '')} побеждает {player2['name']} {player2.get('surname', '')} ({team_name})!"
-            else:
-                return f"⚔️ ДУЭЛЬ! {player2['name']} {player2.get('surname', '')} побеждает {player1['name']} {player1.get('surname', '')} ({team_name})!"
+        player1 = self.get_random_player(team, 'нападающий')
+        player2 = self.get_random_player(team, 'защитник')
+        return f"⚔️ Дуэль между {player1['name']} {player1.get('surname', '')} и {player2['name']} {player2.get('surname', '')}"
+    
+    def create_offside_event(self, team):
+        """Создает офсайд"""
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"🚩 Офсайд у {team_name}"
     
     def get_next_episode(self):
-        if self.current_episode >= len(self.periods):
+        """Возвращает следующий эпизод"""
+        if self.current_episode >= len(self.episodes):
             return None
-        episode = self.periods[self.current_episode]
+        
+        episode = self.episodes[self.current_episode]
         self.current_episode += 1
-        if self.current_episode >= len(self.periods):
+        
+        if self.current_episode >= len(self.episodes):
             self.is_finished = True
+        
         return episode
     
     def get_final_result(self):
+        """Возвращает финальный результат"""
         winner = None
         if self.score_a > self.score_b:
             winner = self.team_a_name
         elif self.score_b > self.score_a:
             winner = self.team_b_name
+        
         return {
             'team_a': self.team_a_name,
             'team_b': self.team_b_name,
@@ -376,10 +331,12 @@ class MatchManager:
             'winner': winner,
             'rating_a': self.rating_a,
             'rating_b': self.rating_b,
-            'period_scores': self.period_scores,
-            'key_events': self.key_events
+            'period_scores': self.period_scores
         }
+
 active_matches = {}
+
+# Обработчики команд
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = str(message.from_user.id)
@@ -435,7 +392,7 @@ async def process_team_name(message: types.Message, state: FSMContext):
 async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     
-    # Кнопка "Назад в меню" - показывает главное меню
+    # Кнопка "Назад в меню"
     if callback.data == "back_to_menu":
         await callback.message.edit_text(
             "🏒 <b>Главное меню:</b>\n\n"
@@ -750,30 +707,36 @@ async def show_next_episode(message: types.Message):
         await end_match(message)
         return
     
-    period_names = {1: "ПЕРВЫЙ", 2: "ВТОРОЙ", 3: "ТРЕТИЙ"}
-    period_name = period_names.get(episode['period'], str(episode['period']))
-    
-    text = f"🏒 <b>{period_name} ПЕРИОД</b>\n"
-    text += f"⏱️ {episode['time']}\n\n"
-    
+    # Формируем текст эпизода как на скриншоте
     if episode.get('is_period_end'):
-        text += episode['event']
-        text += f"\n\n📊 Счёт: {match_manager.team_a_name} {match_manager.score_a} - {match_manager.score_b} {match_manager.team_b_name}"
+        text = f"🔴 {episode['events'][0]}\n\n"
+        text += f"📊 Счёт: {match_manager.team_a_name} {match_manager.score_a} - {match_manager.score_b} {match_manager.team_b_name}"
         text += "\n\n⏸️ ПЕРЕРЫВ 15 МИНУТ"
-    else:
-        if episode.get('is_key'):
-            text += f"⭐ КЛЮЧЕВОЙ МОМЕНТ!\n"
-        text += episode['event']
-    
-    await message.answer(text, parse_mode="HTML")
-    
-    if match_manager.is_finished:
-        await end_match(message)
-    else:
+        
+        await message.answer(text, parse_mode="HTML")
+        
+        # После конца периода показываем кнопку для следующего периода
         await message.answer(
-            "▶️ Нажмите для следующего эпизода:",
+            "▶️ Нажмите для продолжения:",
             reply_markup=get_match_control_keyboard()
         )
+    else:
+        # Форматируем как на скриншоте
+        text = f"🏒 <b>Эпизод {episode['episode']}/{episode['total_in_period']} · {episode['time']}</b>\n\n"
+        
+        # Добавляем каждое событие с новой строки
+        for event in episode['events']:
+            text += f"{episode['time']} {event}\n"
+        
+        await message.answer(text, parse_mode="HTML")
+        
+        if match_manager.is_finished:
+            await end_match(message)
+        else:
+            await message.answer(
+                "▶️ Нажмите для следующего эпизода:",
+                reply_markup=get_match_control_keyboard()
+            )
 
 async def end_match(message: types.Message):
     chat_id = message.chat.id
