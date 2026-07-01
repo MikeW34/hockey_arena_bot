@@ -120,11 +120,13 @@ class MatchManager:
         self.user_team_name = user_team_name
         self.team_a_name = team_a['team_name']
         self.team_b_name = team_b['team_name']
-        self.score_a = 0
-        self.score_b = 0
+        self.score_a = 0  # Общий счет
+        self.score_b = 0  # Общий счет
+        self.period_score_a = 0  # Счет в текущем периоде
+        self.period_score_b = 0  # Счет в текущем периоде
         self.episodes = []
         self.current_episode = 0
-        self.total_episodes_per_period = 6  # 6 эпизодов в периоде
+        self.total_episodes_per_period = 6
         self.total_periods = 3
         self.total_episodes = self.total_periods * self.total_episodes_per_period
         self.is_finished = False
@@ -149,6 +151,10 @@ class MatchManager:
         self.episodes = []
         
         for period in range(1, self.total_periods + 1):
+            # Сбрасываем счет периода
+            self.period_score_a = 0
+            self.period_score_b = 0
+            
             period_episodes = []
             
             for ep_num in range(1, self.total_episodes_per_period + 1):
@@ -160,8 +166,19 @@ class MatchManager:
                     'episode': ep_num,
                     'total_in_period': self.total_episodes_per_period,
                     'time': f"{minutes}'",
-                    'events': events
+                    'events': events,
+                    'period_score_a': self.period_score_a,
+                    'period_score_b': self.period_score_b,
+                    'total_score_a': self.score_a,
+                    'total_score_b': self.score_b
                 })
+            
+            # Сохраняем счет периода
+            self.period_scores.append({
+                'period': period,
+                'score_a': self.period_score_a,
+                'score_b': self.period_score_b
+            })
             
             # Добавляем конец периода
             period_episodes.append({
@@ -170,13 +187,11 @@ class MatchManager:
                 'total_in_period': self.total_episodes_per_period,
                 'time': "20'",
                 'events': [f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА!"],
-                'is_period_end': True
-            })
-            
-            self.period_scores.append({
-                'period': period,
-                'score_a': self.score_a,
-                'score_b': self.score_b
+                'is_period_end': True,
+                'period_score_a': self.period_score_a,
+                'period_score_b': self.period_score_b,
+                'total_score_a': self.score_a,
+                'total_score_b': self.score_b
             })
             
             self.episodes.extend(period_episodes)
@@ -249,44 +264,42 @@ class MatchManager:
     def create_dribble_event(self, team):
         """Создает событие дриблинга"""
         player = self.get_random_player(team, 'нападающий')
-        team_name = self.team_a_name if team == 'A' else self.team_b_name
         return f"{player['name']} {player.get('surname', '')} идёт в дриблинг"
     
     def create_pass_event(self, team):
         """Создает событие паса"""
         player = self.get_random_player(team)
-        team_name = self.team_a_name if team == 'A' else self.team_b_name
         return f"{player['name']} {player.get('surname', '')} отдаёт пас"
     
     def create_tackle_event(self):
         """Создает событие отбора"""
         team = random.choice(['A', 'B'])
         player = self.get_random_player(team, 'защитник')
-        team_name = self.team_a_name if team == 'A' else self.team_b_name
         return f"{player['name']} {player.get('surname', '')} отобрал мяч"
     
     def create_shot_event(self, team):
         """Создает событие удара"""
         player = self.get_random_player(team, 'нападающий')
-        team_name = self.team_a_name if team == 'A' else self.team_b_name
         return f"{player['name']} {player.get('surname', '')} наносит удар по воротам"
     
     def create_save_event(self):
         """Создает событие сэйва"""
         team = random.choice(['A', 'B'])
         player = self.get_random_player(team, 'вратарь')
-        team_name = self.team_a_name if team == 'A' else self.team_b_name
-        return f"СЭЙВ! {player['name']} {player.get('surname', '')} отражает удар"
+        return f"🧤 СЭЙВ! {player['name']} {player.get('surname', '')} отражает удар"
     
     def create_goal_event(self, team):
         """Создает событие гола"""
         player = self.get_random_player(team, 'нападающий')
         team_name = self.team_a_name if team == 'A' else self.team_b_name
         
+        # Увеличиваем счет и в общем, и в периоде
         if team == 'A':
             self.score_a += 1
+            self.period_score_a += 1
         else:
             self.score_b += 1
+            self.period_score_b += 1
         
         return f"🥅 ГОЛ! {player['name']} {player.get('surname', '')} забивает! ({team_name})"
     
