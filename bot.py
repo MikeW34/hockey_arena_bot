@@ -185,6 +185,7 @@ class MatchManager:
                 })
     
     def generate_event(self, period, minutes):
+        """Генерирует событие матча"""
         rating_diff = abs(self.rating_a - self.rating_b)
         underdog_chance = min(0.3, rating_diff / 200)
         
@@ -193,10 +194,11 @@ class MatchManager:
         else:
             weaker_team = 'B'
         
-        event_types = ['goal', 'penalty', 'shot', 'save', 'faceoff', 'duel']
-        weights = [15, 10, 25, 15, 20, 15]
+        # Все возможные события
+        event_types = ['goal', 'penalty', 'shot', 'save', 'faceoff', 'duel', 'pass', 'tackle', 'offside', 'throw_in']
+        weights = [8, 10, 20, 12, 12, 8, 12, 8, 5, 5]
         
-        if random.random() < underdog_chance:
+        if random.random() < underdog_chance and random.random() < 0.3:
             if weaker_team == 'A':
                 return self.create_goal_event('A'), True
             else:
@@ -209,14 +211,34 @@ class MatchManager:
                 return self.create_goal_event('A'), True
             else:
                 return self.create_goal_event('B'), True
+        
         elif event_type == 'penalty':
             return self.create_penalty_event(), False
+        
         elif event_type == 'shot':
             return self.create_shot_event(), False
+        
         elif event_type == 'save':
             return self.create_save_event(), False
+        
+        elif event_type == 'faceoff':
+            return self.create_faceoff_event(), False
+        
         elif event_type == 'duel':
             return self.create_duel_event(), True
+        
+        elif event_type == 'pass':
+            return self.create_pass_event(), False
+        
+        elif event_type == 'tackle':
+            return self.create_tackle_event(), False
+        
+        elif event_type == 'offside':
+            return self.create_offside_event(), False
+        
+        elif event_type == 'throw_in':
+            return self.create_throw_in_event(), False
+        
         else:
             return f"🔄 Вбрасывание в центре поля", False
     
@@ -246,20 +268,67 @@ class MatchManager:
     def create_shot_event(self):
         team = random.choice(['A', 'B'])
         if team == 'A':
-            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
+            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
+            if not player:
+                player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
             return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.team_a_name})"
         else:
-            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
+            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
+            if not player:
+                player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
             return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.team_b_name})"
     
     def create_save_event(self):
         team = random.choice(['A', 'B'])
         if team == 'A':
             goalie = random.choice([p for p in self.team_a['players'] if p['position'] == 'вратарь'])
-            return f"🧤 СОХРАНЕНИЕ! {goalie['name']} {goalie.get('surname', '')} ({self.team_a_name}) отражает бросок!"
+            if not goalie:
+                goalie = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
+            return f"🧤 СЭЙВ! {goalie['name']} {goalie.get('surname', '')} ({self.team_a_name}) отражает бросок!"
         else:
             goalie = random.choice([p for p in self.team_b['players'] if p['position'] == 'вратарь'])
-            return f"🧤 СОХРАНЕНИЕ! {goalie['name']} {goalie.get('surname', '')} ({self.team_b_name}) отражает бросок!"
+            if not goalie:
+                goalie = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
+            return f"🧤 СЭЙВ! {goalie['name']} {goalie.get('surname', '')} ({self.team_b_name}) отражает бросок!"
+    
+    def create_faceoff_event(self):
+        zones = ['центральной', 'левой', 'правой']
+        zone = random.choice(zones)
+        team = random.choice(['A', 'B'])
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"🔄 ВБРАСЫВАНИЕ! Выигрывает {team_name} в {zone} зоне"
+    
+    def create_pass_event(self):
+        team = random.choice(['A', 'B'])
+        if team == 'A':
+            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
+            return f"➡️ ПАС! {player['name']} {player.get('surname', '')} ({self.team_a_name}) отдает передачу"
+        else:
+            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
+            return f"➡️ ПАС! {player['name']} {player.get('surname', '')} ({self.team_b_name}) отдает передачу"
+    
+    def create_tackle_event(self):
+        team = random.choice(['A', 'B'])
+        if team == 'A':
+            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'защитник' in p['position']])
+            if not player:
+                player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
+            return f"🛑 ОТБОР! {player['name']} {player.get('surname', '')} ({self.team_a_name}) перехватывает шайбу"
+        else:
+            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'защитник' in p['position']])
+            if not player:
+                player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
+            return f"🛑 ОТБОР! {player['name']} {player.get('surname', '')} ({self.team_b_name}) перехватывает шайбу"
+    
+    def create_offside_event(self):
+        team = random.choice(['A', 'B'])
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"🚩 ОФСАЙД! {team_name} попали в положение вне игры"
+    
+    def create_throw_in_event(self):
+        team = random.choice(['A', 'B'])
+        team_name = self.team_a_name if team == 'A' else self.team_b_name
+        return f"📤 ВБРАСЫВАНИЕ ИЗ-ЗА БОРТА! Вводит {team_name}"
     
     def create_duel_event(self):
         team = random.choice(['A', 'B'])
@@ -267,6 +336,8 @@ class MatchManager:
             player1 = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
             player2 = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'защитник' in p['position']])
             team_name = self.team_a_name
+            if not player1 or not player2:
+                return f"⚔️ ДУЭЛЬ! ({team_name}) - игроки борются за шайбу"
             if player1['stats']['рейтинг'] > player2['stats']['рейтинг']:
                 return f"⚔️ ДУЭЛЬ! {player1['name']} {player1.get('surname', '')} побеждает {player2['name']} {player2.get('surname', '')} ({team_name})!"
             else:
@@ -275,6 +346,8 @@ class MatchManager:
             player1 = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
             player2 = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'защитник' in p['position']])
             team_name = self.team_b_name
+            if not player1 or not player2:
+                return f"⚔️ ДУЭЛЬ! ({team_name}) - игроки борются за шайбу"
             if player1['stats']['рейтинг'] > player2['stats']['рейтинг']:
                 return f"⚔️ ДУЭЛЬ! {player1['name']} {player1.get('surname', '')} побеждает {player2['name']} {player2.get('surname', '')} ({team_name})!"
             else:
@@ -306,8 +379,6 @@ class MatchManager:
             'period_scores': self.period_scores,
             'key_events': self.key_events
         }
-
-active_matches = {}
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
