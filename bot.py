@@ -379,7 +379,7 @@ class MatchManager:
             'period_scores': self.period_scores,
             'key_events': self.key_events
         }
-
+active_matches = {}
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = str(message.from_user.id)
