@@ -2,17 +2,17 @@ import asyncio
 import logging
 import os
 import sys
+import json
+import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 from config import BOT_TOKEN
-from game import load_players, get_players_by_position, get_player_by_id, load_team_by_name, get_all_teams
-from match import HockeyMatch
-import random
+from game import load_players, get_players_by_position, get_player_by_id, load_team_by_name, get_all_teams, save_user_data, load_user_data, get_all_league_data
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -34,10 +34,12 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # Состояния
-class MatchStates(StatesGroup):
+class UserStates(StatesGroup):
+    waiting_for_team_name = State()
+    waiting_for_league = State()
     waiting_for_match = State()
 
-# ГЛАВНОЕ МЕНЮ - инлайн кнопки (как ссылки)
+# ГЛАВНОЕ МЕНЮ - инлайн кнопки (всегда отображается)
 def get_main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -58,6 +60,21 @@ def get_main_menu():
     ])
     return keyboard
 
+# Клавиатура для выбора лиги
+def get_leagues_keyboard():
+    leagues = get_all_league_data()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    
+    for league in leagues:
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(text=f"🏒 {league['name']}", callback_data=f"league_{league['id']}")
+        ])
+    
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")
+    ])
+    return keyboard
+
 # Клавиатура для выбора команды для просмотра состава
 def get_team_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -66,7 +83,7 @@ def get_team_keyboard():
             InlineKeyboardButton(text="🦅 Красные Орлы", callback_data="team_red")
         ],
         [
-            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
+            InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")
         ]
     ])
     return keyboard
@@ -79,7 +96,7 @@ def get_match_team_keyboard():
             InlineKeyboardButton(text="🦅 Красные Орлы", callback_data="match_red")
         ],
         [
-            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
+            InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")
         ]
     ])
     return keyboard
@@ -98,120 +115,234 @@ def get_match_control_keyboard():
 
 # Класс для управления матчем
 class MatchManager:
-    def __init__(self, team_a, team_b):
+    def __init__(self, team_a, team_b, user_team_name=None):
         self.team_a = team_a
         self.team_b = team_b
-        self.match = HockeyMatch(team_a, team_b)
+        self.user_team_name = user_team_name
+        self.team_a_name = team_a['team_name']
+        self.team_b_name = team_b['team_name']
+        self.score_a = 0
+        self.score_b = 0
+        self.periods = []
+        self.current_period = 0
         self.current_episode = 0
         self.total_episodes = 30
-        self.episodes = []
         self.is_finished = False
-        self.generate_episodes()
+        self.period_scores = []
+        self.key_events = []
+        self.match_log = []
+        self.period_events = []
+        self.generate_periods()
+        self.calculate_team_ratings()
     
-    def generate_episodes(self):
-        """Генерирует эпизоды матча"""
-        self.episodes = []
+    def calculate_team_ratings(self):
+        """Вычисляет рейтинг команд"""
+        def get_team_rating(team):
+            main_players = [p for p in team['players'] if p.get('is_main', False)]
+            if main_players:
+                total = sum(p['stats'].get('рейтинг', 0) for p in main_players[:6])
+                return round(total / 6, 1)
+            return 0
         
-        for i in range(self.total_episodes):
-            if i < 10:
-                period = 1
-                episode_in_period = i + 1
-            elif i < 20:
-                period = 2
-                episode_in_period = i - 9
-            else:
-                period = 3
-                episode_in_period = i - 19
+        self.rating_a = get_team_rating(self.team_a)
+        self.rating_b = get_team_rating(self.team_b)
+    
+    def generate_periods(self):
+        """Генерирует все периоды с эпизодами"""
+        self.periods = []
+        period_events = []
+        
+        for i in range(30):
+            period = (i // 10) + 1
+            episode_in_period = (i % 10) + 1
+            minutes = episode_in_period * 2
             
-            minutes = random.randint(0, 20)
-            event = self.generate_event()
+            # Генерируем событие
+            event, key = self.generate_event(period, minutes)
             
-            if episode_in_period == 10:
-                event = f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА!\n📊 Счёт: {self.match.team_a_name} {self.match.score_a} - {self.match.score_b} {self.match.team_b_name}"
+            if key:
+                self.key_events.append({
+                    'period': period,
+                    'time': f"{minutes}'",
+                    'event': event
+                })
             
-            self.episodes.append({
+            period_events.append({
                 'period': period,
-                'minutes': minutes,
+                'time': f"{minutes}'",
                 'episode': episode_in_period,
                 'event': event,
-                'is_period_end': episode_in_period == 10
+                'is_key': key
             })
+            
+            # Если конец периода
+            if episode_in_period == 10:
+                period_events.append({
+                    'period': period,
+                    'time': f"20'",
+                    'episode': episode_in_period,
+                    'event': f"🔴 КОНЕЦ {period}-ГО ПЕРИОДА!",
+                    'is_key': True,
+                    'is_period_end': True
+                })
+                
+                self.period_scores.append({
+                    'period': period,
+                    'score_a': self.score_a,
+                    'score_b': self.score_b
+                })
+        
+        self.periods = period_events
     
-    def generate_event(self):
-        """Генерирует случайное событие матча"""
-        event_types = ['goal_a', 'goal_b', 'penalty_a', 'penalty_b', 'shot_a', 'shot_b', 'faceoff', 'save_a', 'save_b']
-        weights = [15, 15, 8, 8, 20, 20, 10, 2, 2]
+    def generate_event(self, period, minutes):
+        """Генерирует событие матча с учетом вероятностей"""
+        # У слабой команды есть шанс на успех (1 к 5 или 1 к 10)
+        rating_diff = abs(self.rating_a - self.rating_b)
+        underdog_chance = min(0.3, rating_diff / 200)  # Максимум 30% шанс у слабого
+        
+        # Определяем, какая команда слабее
+        if self.rating_a < self.rating_b:
+            weaker_team = 'A'
+            stronger_team = 'B'
+        else:
+            weaker_team = 'B'
+            stronger_team = 'A'
+        
+        event_types = ['goal', 'penalty', 'shot', 'save', 'faceoff', 'duel']
+        weights = [15, 10, 25, 15, 20, 15]
+        
+        # Увеличиваем шанс гола для слабой команды
+        if random.random() < underdog_chance:
+            if weaker_team == 'A':
+                return self.create_goal_event('A', period, minutes), True
+            else:
+                return self.create_goal_event('B', period, minutes), True
+        
         event_type = random.choices(event_types, weights=weights)[0]
         
-        players_a = self.match.team_a_on_ice
-        players_b = self.match.team_b_on_ice
+        if event_type == 'goal':
+            # Шанс гола зависит от рейтинга
+            if random.random() < self.rating_a / (self.rating_a + self.rating_b):
+                return self.create_goal_event('A', period, minutes), True
+            else:
+                return self.create_goal_event('B', period, minutes), True
         
-        if event_type == 'goal_a':
-            scorer = random.choice([p for p in players_a if 'нападающий' in p['position']] or players_a)
-            self.match.score_a += 1
-            return f"🥅 ГОЛ! {scorer['name']} {scorer.get('surname', '')} ({self.match.team_a_name}) забивает!"
+        elif event_type == 'penalty':
+            return self.create_penalty_event(period, minutes), False
         
-        elif event_type == 'goal_b':
-            scorer = random.choice([p for p in players_b if 'нападающий' in p['position']] or players_b)
-            self.match.score_b += 1
-            return f"🥅 ГОЛ! {scorer['name']} {scorer.get('surname', '')} ({self.match.team_b_name}) забивает!"
+        elif event_type == 'shot':
+            return self.create_shot_event(period, minutes), False
         
-        elif event_type == 'penalty_a':
-            player = random.choice(players_a)
-            minutes_penalty = random.choices([2, 5, 10], weights=[70, 20, 10])[0]
-            return f"⛔ ШТРАФ {minutes_penalty} МИНУТ! {player['name']} {player.get('surname', '')} ({self.match.team_a_name})"
+        elif event_type == 'save':
+            return self.create_save_event(period, minutes), False
         
-        elif event_type == 'penalty_b':
-            player = random.choice(players_b)
-            minutes_penalty = random.choices([2, 5, 10], weights=[70, 20, 10])[0]
-            return f"⛔ ШТРАФ {minutes_penalty} МИНУТ! {player['name']} {player.get('surname', '')} ({self.match.team_b_name})"
-        
-        elif event_type == 'shot_a':
-            player = random.choice([p for p in players_a if 'нападающий' in p['position']] or players_a)
-            return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.match.team_a_name})"
-        
-        elif event_type == 'shot_b':
-            player = random.choice([p for p in players_b if 'нападающий' in p['position']] or players_b)
-            return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.match.team_b_name})"
-        
-        elif event_type == 'save_a':
-            goalie = random.choice([p for p in players_a if p['position'] == 'вратарь'] or players_a)
-            return f"🧤 СОХРАНЕНИЕ! {goalie['name']} {goalie.get('surname', '')} ({self.match.team_a_name}) отражает бросок!"
-        
-        elif event_type == 'save_b':
-            goalie = random.choice([p for p in players_b if p['position'] == 'вратарь'] or players_b)
-            return f"🧤 СОХРАНЕНИЕ! {goalie['name']} {goalie.get('surname', '')} ({self.match.team_b_name}) отражает бросок!"
+        elif event_type == 'duel':
+            return self.create_duel_event(period, minutes), True
         
         else:
-            return f"🔄 Вбрасывание в центре поля"
+            return f"🔄 Вбрасывание в центре поля", False
+    
+    def create_goal_event(self, team, period, minutes):
+        """Создает событие гола"""
+        if team == 'A':
+            players = [p for p in self.team_a['players'] if p.get('is_main', False)]
+            scorer = random.choice([p for p in players if 'нападающий' in p['position']] or players)
+            self.score_a += 1
+            return f"🥅 ГОЛ! {scorer['name']} {scorer.get('surname', '')} ({self.team_a_name}) забивает!"
+        else:
+            players = [p for p in self.team_b['players'] if p.get('is_main', False)]
+            scorer = random.choice([p for p in players if 'нападающий' in p['position']] or players)
+            self.score_b += 1
+            return f"🥅 ГОЛ! {scorer['name']} {scorer.get('surname', '')} ({self.team_b_name}) забивает!"
+    
+    def create_penalty_event(self, period, minutes):
+        """Создает событие штрафа"""
+        team = random.choice(['A', 'B'])
+        if team == 'A':
+            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
+            mins = random.choices([2, 5, 10], weights=[70, 20, 10])[0]
+            return f"⛔ ШТРАФ {mins} МИН! {player['name']} {player.get('surname', '')} ({self.team_a_name})"
+        else:
+            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
+            mins = random.choices([2, 5, 10], weights=[70, 20, 10])[0]
+            return f"⛔ ШТРАФ {mins} МИН! {player['name']} {player.get('surname', '')} ({self.team_b_name})"
+    
+    def create_shot_event(self, period, minutes):
+        """Создает событие броска"""
+        team = random.choice(['A', 'B'])
+        if team == 'A':
+            player = random.choice([p for p in self.team_a['players'] if p.get('is_main', False)])
+            return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.team_a_name})"
+        else:
+            player = random.choice([p for p in self.team_b['players'] if p.get('is_main', False)])
+            return f"🎯 БРОСОК! {player['name']} {player.get('surname', '')} ({self.team_b_name})"
+    
+    def create_save_event(self, period, minutes):
+        """Создает событие сэйва вратаря"""
+        team = random.choice(['A', 'B'])
+        if team == 'A':
+            goalie = random.choice([p for p in self.team_a['players'] if p['position'] == 'вратарь'])
+            return f"🧤 СОХРАНЕНИЕ! {goalie['name']} {goalie.get('surname', '')} ({self.team_a_name}) отражает бросок!"
+        else:
+            goalie = random.choice([p for p in self.team_b['players'] if p['position'] == 'вратарь'])
+            return f"🧤 СОХРАНЕНИЕ! {goalie['name']} {goalie.get('surname', '')} ({self.team_b_name}) отражает бросок!"
+    
+    def create_duel_event(self, period, minutes):
+        """Создает дуэль между игроками"""
+        positions = ['нападающий', 'защитник']
+        team = random.choice(['A', 'B'])
+        
+        if team == 'A':
+            player1 = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
+            player2 = random.choice([p for p in self.team_a['players'] if p.get('is_main', False) and 'защитник' in p['position']])
+            team_name = self.team_a_name
+            
+            # Кто победит в дуэли
+            if player1['stats']['рейтинг'] > player2['stats']['рейтинг']:
+                return f"⚔️ ДУЭЛЬ! {player1['name']} {player1.get('surname', '')} побеждает {player2['name']} {player2.get('surname', '')} ({team_name})!"
+            else:
+                return f"⚔️ ДУЭЛЬ! {player2['name']} {player2.get('surname', '')} побеждает {player1['name']} {player1.get('surname', '')} ({team_name})!"
+        else:
+            player1 = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'нападающий' in p['position']])
+            player2 = random.choice([p for p in self.team_b['players'] if p.get('is_main', False) and 'защитник' in p['position']])
+            team_name = self.team_b_name
+            
+            if player1['stats']['рейтинг'] > player2['stats']['рейтинг']:
+                return f"⚔️ ДУЭЛЬ! {player1['name']} {player1.get('surname', '')} побеждает {player2['name']} {player2.get('surname', '')} ({team_name})!"
+            else:
+                return f"⚔️ ДУЭЛЬ! {player2['name']} {player2.get('surname', '')} побеждает {player1['name']} {player1.get('surname', '')} ({team_name})!"
     
     def get_next_episode(self):
-        if self.current_episode >= self.total_episodes:
+        """Возвращает следующий эпизод матча"""
+        if self.current_episode >= len(self.periods):
             return None
         
-        episode = self.episodes[self.current_episode]
+        episode = self.periods[self.current_episode]
         self.current_episode += 1
         
-        if self.current_episode >= self.total_episodes:
+        if self.current_episode >= len(self.periods):
             self.is_finished = True
         
         return episode
     
     def get_final_result(self):
+        """Возвращает финальный результат"""
         winner = None
-        if self.match.score_a > self.match.score_b:
-            winner = self.match.team_a_name
-        elif self.match.score_b > self.match.score_a:
-            winner = self.match.team_b_name
+        if self.score_a > self.score_b:
+            winner = self.team_a_name
+        elif self.score_b > self.score_a:
+            winner = self.team_b_name
         
         return {
-            'team_a': self.match.team_a_name,
-            'team_b': self.match.team_b_name,
-            'score_a': self.match.score_a,
-            'score_b': self.match.score_b,
+            'team_a': self.team_a_name,
+            'team_b': self.team_b_name,
+            'score_a': self.score_a,
+            'score_b': self.score_b,
             'winner': winner,
-            'rating_a': self.match.team_a_rating,
-            'rating_b': self.match.team_b_rating
+            'rating_a': self.rating_a,
+            'rating_b': self.rating_b,
+            'period_scores': self.period_scores,
+            'key_events': self.key_events
         }
 
 # Хранилище активных матчей
@@ -230,11 +361,9 @@ async def show_team(message: types.Message, team_name: str):
         team_name_display = team_data.get('team_name', team_name)
         coach = team_data.get('coach', 'Неизвестно')
         
-        # Разделяем основной состав и запасных
         main_players = [p for p in players if p.get('is_main', False)]
         reserve_players = [p for p in players if not p.get('is_main', False)]
         
-        # Группируем основной состав по позициям
         goalies = [p for p in main_players if p['position'] == 'вратарь']
         defenders = [p for p in main_players if 'защитник' in p['position']]
         forwards = [p for p in main_players if 'нападающий' in p['position']]
@@ -243,7 +372,6 @@ async def show_team(message: types.Message, team_name: str):
         text += f"👨‍🏫 Тренер: {coach}\n\n"
         text += "🔴 <b>ОСНОВНОЙ СОСТАВ (6 игроков)</b>\n\n"
         
-        # Вратари
         if goalies:
             text += "🥅 <b>Вратари:</b>\n"
             for p in goalies:
@@ -251,7 +379,6 @@ async def show_team(message: types.Message, team_name: str):
                 text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
             text += "\n"
         
-        # Защитники
         if defenders:
             text += "🛡️ <b>Защитники:</b>\n"
             for p in defenders:
@@ -259,7 +386,6 @@ async def show_team(message: types.Message, team_name: str):
                 text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
             text += "\n"
         
-        # Нападающие
         if forwards:
             text += "⚡ <b>Нападающие:</b>\n"
             for p in forwards:
@@ -267,44 +393,80 @@ async def show_team(message: types.Message, team_name: str):
                 text += f"  #{p['number']} {p['name']} {surname} (Звено {p.get('line', 1)})\n"
             text += "\n"
         
-        # Запасные
         if reserve_players:
             text += f"🔄 <b>Запасные ({len(reserve_players)} игроков)</b>\n"
-            for p in reserve_players[:15]:  # Показываем первых 15 запасных
+            for p in reserve_players[:15]:
                 surname = p.get('surname', '')
                 text += f"  #{p['number']} {p['name']} {surname} ({p['position']})\n"
             if len(reserve_players) > 15:
                 text += f"  ... и ещё {len(reserve_players) - 15} игроков\n"
         
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔄 Показать другую команду", callback_data="show_team"),
-                InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")
-            ]
-        ])
+        # Отправляем сообщение и возвращаем главное меню
+        await message.answer(text, parse_mode="HTML")
         
-        await message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+        # Возвращаем главное меню
+        await message.answer(
+            "📋 <b>Главное меню:</b>",
+            parse_mode="HTML",
+            reply_markup=get_main_menu()
+        )
     
     except Exception as e:
         logging.error(f"Ошибка в show_team: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {str(e)}")
-        
+
+# Обработчики
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    """Команда /start - показывает главное меню с инлайн-кнопками"""
-    welcome_text = (
-        "🏒 <b>Добро пожаловать в хоккейный бот!</b>\n\n"
-        "🎮 Выберите действие из меню ниже:\n\n"
-        "🏒 Сыграть матч - начать матч между командами\n"
-        "📋 Состав команды - просмотр состава\n"
-        "🏆 Лиги - информация о лигах\n"
-        "🔄 Коллекция - все игроки\n"
-        "👤 Профиль - ваш профиль\n"
-        "⭐ Рейтинг - рейтинг команд\n"
-        "❓ Помощь - справка"
-    )
+async def cmd_start(message: types.Message, state: FSMContext):
+    """Команда /start - запрос названия команды"""
+    user_id = str(message.from_user.id)
+    user_data = load_user_data(user_id)
+    
+    if user_data and user_data.get('team_name'):
+        # У пользователя уже есть команда
+        await message.answer(
+            f"🏒 <b>Добро пожаловать обратно, {message.from_user.first_name}!</b>\n\n"
+            f"Ваша команда: <b>{user_data['team_name']}</b>\n"
+            f"Выберите действие из меню ниже:",
+            parse_mode="HTML",
+            reply_markup=get_main_menu()
+        )
+    else:
+        # Запрашиваем название команды
+        await state.set_state(UserStates.waiting_for_team_name)
+        await message.answer(
+            "🏒 <b>Добро пожаловать в хоккейный бот!</b>\n\n"
+            "Для начала создайте свою команду!\n"
+            "Придумайте название для вашей команды:",
+            parse_mode="HTML"
+        )
+
+@dp.message(UserStates.waiting_for_team_name)
+async def process_team_name(message: types.Message, state: FSMContext):
+    """Обработка ввода названия команды"""
+    team_name = message.text.strip()
+    
+    if len(team_name) < 2:
+        await message.answer("❌ Название команды должно содержать минимум 2 символа. Попробуйте еще раз:")
+        return
+    
+    if len(team_name) > 50:
+        await message.answer("❌ Название команды слишком длинное (максимум 50 символов). Попробуйте еще раз:")
+        return
+    
+    # Сохраняем название команды
+    user_id = str(message.from_user.id)
+    save_user_data(user_id, {
+        'team_name': team_name,
+        'username': message.from_user.username or message.from_user.first_name
+    })
+    
+    await state.clear()
+    
     await message.answer(
-        welcome_text,
+        f"✅ <b>Отлично!</b>\n\n"
+        f"Ваша команда <b>«{team_name}»</b> успешно создана!\n\n"
+        f"Теперь выберите действие из меню ниже:",
         parse_mode="HTML",
         reply_markup=get_main_menu()
     )
@@ -332,26 +494,65 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             reply_markup=get_main_menu()
         )
     
+    # Лиги
+    elif callback.data == "show_leagues":
+        await callback.message.edit_text(
+            "🏆 <b>ВЫБЕРИТЕ ЛИГУ</b>\n\n"
+            "Нажмите на лигу, чтобы присоединиться:",
+            parse_mode="HTML",
+            reply_markup=get_leagues_keyboard()
+        )
+    
+    elif callback.data.startswith("league_"):
+        league_id = callback.data.replace("league_", "")
+        leagues = get_all_league_data()
+        league = next((l for l in leagues if str(l['id']) == league_id), None)
+        
+        if league:
+            user_id = str(callback.from_user.id)
+            save_user_data(user_id, {'current_league': league['name']})
+            
+            text = f"🏒 <b>ЛИГА: {league['name']}</b>\n\n"
+            text += f"📋 {league['description']}\n\n"
+            text += f"🏆 Главный приз: {league['prize']}\n"
+            text += f"📊 Команды: {league['teams']}\n"
+            text += f"🌍 Страны: {league['countries']}\n\n"
+            text += "Вы успешно присоединились к лиге!"
+            
+            await callback.message.edit_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Назад к лигам", callback_data="show_leagues")],
+                    [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+                ])
+            )
+    
+    # Помощь
     elif callback.data == "show_help":
         help_text = (
-            "📋 <b>Доступные команды:</b>\n\n"
+            "📋 <b>Помощь по боту</b>\n\n"
             "🏒 <b>Сыграть матч</b> - начать матч между командами\n"
             "📋 <b>Состав команды</b> - просмотр состава команд\n"
-            "🏆 <b>Лиги</b> - информация о хоккейных лигах\n"
+            "🏆 <b>Лиги</b> - выбор и просмотр лиг\n"
             "🔄 <b>Коллекция</b> - все игроки команд\n"
             "👤 <b>Профиль</b> - ваш профиль\n"
             "⭐ <b>Рейтинг</b> - рейтинг команд\n\n"
-            "📌 <b>Дополнительные команды:</b>\n"
-            "/menu - Показать главное меню\n"
-            "/player [номер] - Карточка игрока\n\n"
-            "🏒 <b>Доступные команды:</b>\n"
-            "🦅 Чёрные Вороны (тренер: Ивашка Тупоголовый)\n"
-            "🦅 Красные Орлы (тренер: Павел Ихтиандрович)"
+            "📌 <b>Как играть:</b>\n"
+            "1. Создайте свою команду через /start\n"
+            "2. Выберите лигу для участия\n"
+            "3. Играйте матчи и побеждайте!\n\n"
+            "🏆 <b>Доступные лиги:</b>\n"
+            "• КХЛ - Кубок Гагарина\n"
+            "• НХЛ - Кубок Стэнли\n"
+            "• ВХЛ - Кубок Петрова\n"
+            "• МХЛ - Кубок Харламова"
         )
         await callback.message.edit_text(help_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
         ]))
     
+    # Рейтинг
     elif callback.data == "show_rating":
         try:
             teams = get_all_teams()
@@ -388,26 +589,32 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             logging.error(f"Ошибка в show_rating: {e}", exc_info=True)
             await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
     
+    # Профиль
     elif callback.data == "show_profile":
-        user_id = callback.from_user.id
+        user_id = str(callback.from_user.id)
+        user_data = load_user_data(user_id)
         username = callback.from_user.username or callback.from_user.first_name
+        team_name = user_data.get('team_name', 'Не создана') if user_data else 'Не создана'
+        league = user_data.get('current_league', 'Не выбрана') if user_data else 'Не выбрана'
         
         text = (
             f"👤 <b>ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ</b>\n\n"
             f"📌 Имя: {username}\n"
-            f"🆔 ID: {user_id}\n\n"
+            f"🆔 ID: {user_id}\n"
+            f"🏒 Команда: {team_name}\n"
+            f"🏆 Лига: {league}\n\n"
             f"📊 <b>Статистика:</b>\n"
-            f"🏒 Сыграно матчей: 0\n"
-            f"🏆 Побед: 0\n"
-            f"⚽ Голов забито: 0\n"
-            f"🔄 Передач: 0\n\n"
-            f"⭐ Рейтинг: 1000\n"
-            f"🏆 Кубков: 0"
+            f"🏒 Сыграно матчей: {user_data.get('matches', 0) if user_data else 0}\n"
+            f"🏆 Побед: {user_data.get('wins', 0) if user_data else 0}\n"
+            f"⚽ Голов забито: {user_data.get('goals', 0) if user_data else 0}\n"
+            f"🔄 Передач: {user_data.get('assists', 0) if user_data else 0}\n\n"
+            f"⭐ Рейтинг: {user_data.get('rating', 1000) if user_data else 1000}"
         )
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
         ]))
     
+    # Коллекция
     elif callback.data == "show_collection":
         try:
             players = load_players()
@@ -446,25 +653,7 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             logging.error(f"Ошибка в show_collection: {e}", exc_info=True)
             await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
     
-    elif callback.data == "show_leagues":
-        text = (
-            "🏆 <b>ХОККЕЙНЫЕ ЛИГИ</b>\n\n"
-            "📍 <b>КХЛ (Континентальная Хоккейная Лига)</b>\n"
-            "• Страны: Россия, Беларусь, Казахстан, Китай\n"
-            "• Количество команд: 23\n"
-            "• Главный приз: Кубок Гагарина\n"
-            "• Сезон: Регулярный чемпионат → Плей-офф\n\n"
-            "📌 <b>Другие лиги в разработке:</b>\n"
-            "• 🏒 НХЛ (Национальная Хоккейная Лига)\n"
-            "• 🏒 ВХЛ (Высшая Хоккейная Лига)\n"
-            "• 🏒 МХЛ (Молодёжная Хоккейная Лига)\n\n"
-            "⚡ Регулярный чемпионат: команды играют друг с другом за очки\n"
-            "🏆 Плей-офф: матчи на выбывание, победитель получает Кубок"
-        )
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-        ]))
-    
+    # Выбор команды для просмотра состава
     elif callback.data == "show_team":
         await callback.message.edit_text(
             "📋 <b>Выберите команду для просмотра состава:</b>",
@@ -472,14 +661,6 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             reply_markup=get_team_keyboard()
         )
     
-    elif callback.data == "play_match":
-        await callback.message.edit_text(
-            "🏒 <b>Выберите команду за которую будете играть:</b>",
-            parse_mode="HTML",
-            reply_markup=get_match_team_keyboard()
-        )
-    
-    # Выбор команды для просмотра состава
     elif callback.data == "team_black":
         await show_team(callback.message, "Чёрные Вороны")
     
@@ -487,6 +668,13 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
         await show_team(callback.message, "Красные Орлы")
     
     # Выбор команды для матча
+    elif callback.data == "play_match":
+        await callback.message.edit_text(
+            "🏒 <b>Выберите команду за которую будете играть:</b>",
+            parse_mode="HTML",
+            reply_markup=get_match_team_keyboard()
+        )
+    
     elif callback.data == "match_black":
         await start_match(callback.message, "Чёрные Вороны", "Красные Орлы")
     
@@ -503,6 +691,10 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
 async def start_match(message: types.Message, team_a_name: str, team_b_name: str):
     """Запускает матч с пошаговым показом"""
     try:
+        user_id = str(message.chat.id)
+        user_data = load_user_data(user_id)
+        user_team_name = user_data.get('team_name', 'Ваша команда') if user_data else 'Ваша команда'
+        
         team_a = load_team_by_name(team_a_name)
         team_b = load_team_by_name(team_b_name)
         
@@ -510,7 +702,7 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
             await message.edit_text("❌ Одна из команд не найдена!")
             return
         
-        match_manager = MatchManager(team_a, team_b)
+        match_manager = MatchManager(team_a, team_b, user_team_name)
         
         chat_id = message.chat.id
         active_matches[chat_id] = match_manager
@@ -518,12 +710,13 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
         await message.edit_text(
             f"🏒 <b>МАТЧ НАЧИНАЕТСЯ!</b>\n\n"
             f"⚔️ {team_a_name} vs {team_b_name}\n"
-            f"📊 Рейтинг {team_a_name}: {match_manager.match.team_a_rating}\n"
-            f"📊 Рейтинг {team_b_name}: {match_manager.match.team_b_rating}\n\n"
-            f"⏳ Нажмите кнопку ниже для просмотра эпизодов:",
+            f"📊 Рейтинг {team_a_name}: {match_manager.rating_a}\n"
+            f"📊 Рейтинг {team_b_name}: {match_manager.rating_b}\n\n"
+            f"⏳ Матч будет показан эпизодами:",
             parse_mode="HTML"
         )
         
+        # Показываем первый эпизод
         await show_next_episode(message)
         
     except Exception as e:
@@ -531,11 +724,11 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
         await message.edit_text(f"❌ Ошибка при проведении матча: {str(e)}")
 
 async def show_next_episode(message: types.Message):
-    """Показывает следующий эпизод матча"""
+    """Показывает следующий эпизод матча отдельным сообщением"""
     chat_id = message.chat.id
     
     if chat_id not in active_matches:
-        await message.edit_text("❌ Матч не найден!")
+        await message.answer("❌ Матч не найден!")
         return
     
     match_manager = active_matches[chat_id]
@@ -545,39 +738,55 @@ async def show_next_episode(message: types.Message):
         await end_match(message)
         return
     
+    # Формируем текст эпизода
     period_names = {1: "ПЕРВЫЙ", 2: "ВТОРОЙ", 3: "ТРЕТИЙ"}
     period_name = period_names.get(episode['period'], str(episode['period']))
     
-    text = f"🏒 <b>{period_name} ПЕРИОД - Эпизод {episode['episode']}</b>\n"
-    text += f"⏱️ {episode['minutes']}' минута\n\n"
-    text += episode['event']
+    text = f"🏒 <b>{period_name} ПЕРИОД</b>\n"
+    text += f"⏱️ {episode['time']}\n\n"
     
-    if episode['is_period_end'] and episode['episode'] == 10:
-        text += f"\n\n📊 Счёт после периода: {match_manager.match.team_a_name} {match_manager.match.score_a} - {match_manager.match.score_b} {match_manager.match.team_b_name}"
+    if episode.get('is_period_end'):
+        text += episode['event']
+        text += f"\n\n📊 Счёт: {match_manager.team_a_name} {match_manager.score_a} - {match_manager.score_b} {match_manager.team_b_name}"
         text += "\n\n⏸️ ПЕРЕРЫВ 15 МИНУТ"
-    elif episode['period'] == 3 and episode['episode'] == 10:
-        text += f"\n\n🏁 КОНЕЦ МАТЧА!\n\n📊 Финальный счёт: {match_manager.match.team_a_name} {match_manager.match.score_a} - {match_manager.match.score_b} {match_manager.match.team_b_name}"
+    else:
+        if episode.get('is_key'):
+            text += f"⭐ <b>КЛЮЧЕВОЙ МОМЕНТ!</b>\n"
+        text += episode['event']
     
+    # Отправляем новое сообщение с эпизодом
+    await message.answer(text, parse_mode="HTML")
+    
+    # Если матч закончился
     if match_manager.is_finished:
-        await message.edit_text(text, parse_mode="HTML")
         await end_match(message)
     else:
-        await message.edit_text(text, parse_mode="HTML", reply_markup=get_match_control_keyboard())
+        # Показываем кнопки управления после каждого эпизода
+        await message.answer(
+            "▶️ Нажмите для следующего эпизода:",
+            reply_markup=get_match_control_keyboard()
+        )
 
 async def end_match(message: types.Message):
     """Завершает матч и показывает результат"""
     chat_id = message.chat.id
     
     if chat_id not in active_matches:
-        await message.edit_text("❌ Матч не найден!")
+        await message.answer("❌ Матч не найден!")
         return
     
     match_manager = active_matches[chat_id]
     result = match_manager.get_final_result()
     
     text = "🏒 <b>ИТОГИ МАТЧА</b>\n\n"
-    text += f"⚔️ {result['team_a']} vs {result['team_b']}\n"
-    text += f"📊 <b>{result['score_a']} - {result['score_b']}</b>\n\n"
+    text += f"⚔️ {result['team_a']} vs {result['team_b']}\n\n"
+    
+    # Результат по периодам
+    text += "📊 <b>Счет по периодам:</b>\n"
+    for ps in result['period_scores']:
+        text += f"  Период {ps['period']}: {ps['score_a']} - {ps['score_b']}\n"
+    
+    text += f"\n📊 <b>ФИНАЛЬНЫЙ СЧЁТ: {result['score_a']} - {result['score_b']}</b>\n\n"
     
     if result['winner']:
         text += f"🏆 <b>ПОБЕДИТЕЛЬ: {result['winner']}</b>\n\n"
@@ -586,17 +795,37 @@ async def end_match(message: types.Message):
     
     text += "📈 <b>Рейтинг команд:</b>\n"
     text += f"• {result['team_a']}: {result['rating_a']}\n"
-    text += f"• {result['team_b']}: {result['rating_b']}\n"
+    text += f"• {result['team_b']}: {result['rating_b']}\n\n"
+    
+    # Ключевые моменты матча
+    if result['key_events']:
+        text += "⭐ <b>КЛЮЧЕВЫЕ МОМЕНТЫ:</b>\n"
+        for event in result['key_events'][:5]:
+            text += f"  {event['time']} - {event['event']}\n"
+    
+    # Обновляем статистику пользователя
+    user_id = str(message.chat.id)
+    user_data = load_user_data(user_id)
+    if user_data:
+        user_data['matches'] = user_data.get('matches', 0) + 1
+        if result['winner'] == user_data.get('team_name'):
+            user_data['wins'] = user_data.get('wins', 0) + 1
+        save_user_data(user_id, user_data)
     
     del active_matches[chat_id]
     
-    await message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_menu")]
-    ]))
+    await message.answer(text, parse_mode="HTML")
+    
+    # Возвращаем главное меню
+    await message.answer(
+        "🏒 <b>Главное меню:</b>",
+        parse_mode="HTML",
+        reply_markup=get_main_menu()
+    )
 
 @dp.message(Command("player"))
 async def cmd_player(message: types.Message):
-    """Показывает карточку игрока. Использование: /player 10"""
+    """Показывает карточку игрока"""
     try:
         args = message.text.split()
         if len(args) < 2:
