@@ -39,7 +39,7 @@ class UserStates(StatesGroup):
     waiting_for_league = State()
     waiting_for_match = State()
 
-# ГЛАВНОЕ МЕНЮ - инлайн кнопки (всегда отображается)
+# ГЛАВНОЕ МЕНЮ - всегда статичное
 def get_main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -132,20 +132,21 @@ class MatchManager:
         self.key_events = []
         self.match_log = []
         self.period_events = []
-        self.generate_periods()
-        self.calculate_team_ratings()
-    
-    def calculate_team_ratings(self):
-        """Вычисляет рейтинг команд"""
-        def get_team_rating(team):
-            main_players = [p for p in team['players'] if p.get('is_main', False)]
-            if main_players:
-                total = sum(p['stats'].get('рейтинг', 0) for p in main_players[:6])
-                return round(total / 6, 1)
-            return 0
         
-        self.rating_a = get_team_rating(self.team_a)
-        self.rating_b = get_team_rating(self.team_b)
+        # Инициализируем рейтинги
+        self.rating_a = self.calculate_team_rating(team_a)
+        self.rating_b = self.calculate_team_rating(team_b)
+        
+        self.generate_periods()
+    
+    def calculate_team_rating(self, team):
+        """Вычисляет рейтинг команды"""
+        players = team.get('players', [])
+        main_players = [p for p in players if p.get('is_main', False)]
+        if main_players:
+            total = sum(p['stats'].get('рейтинг', 0) for p in main_players[:6])
+            return round(total / 6, 1)
+        return 0
     
     def generate_periods(self):
         """Генерирует все периоды с эпизодами"""
@@ -354,7 +355,7 @@ async def show_team(message: types.Message, team_name: str):
     try:
         team_data = load_team_by_name(team_name)
         if not team_data:
-            await message.answer(f"❌ Команда '{team_name}' не найдена!")
+            await message.answer(f"❌ Команда '{team_name}' не найдена!", reply_markup=get_main_menu())
             return
         
         players = team_data.get('players', [])
@@ -401,19 +402,19 @@ async def show_team(message: types.Message, team_name: str):
             if len(reserve_players) > 15:
                 text += f"  ... и ещё {len(reserve_players) - 15} игроков\n"
         
-        # Отправляем сообщение и возвращаем главное меню
+        # Отправляем сообщение с составом
         await message.answer(text, parse_mode="HTML")
         
-        # Возвращаем главное меню
+        # После показа состава снова показываем меню выбора команд
         await message.answer(
-            "📋 <b>Главное меню:</b>",
+            "📋 <b>Выберите другую команду или вернитесь в меню:</b>",
             parse_mode="HTML",
-            reply_markup=get_main_menu()
+            reply_markup=get_team_keyboard()
         )
     
     except Exception as e:
         logging.error(f"Ошибка в show_team: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=get_main_menu())
 
 # Обработчики
 @dp.message(Command("start"))
@@ -496,7 +497,8 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
     
     # Лиги
     elif callback.data == "show_leagues":
-        await callback.message.edit_text(
+        await callback.message.delete()
+        await callback.message.answer(
             "🏆 <b>ВЫБЕРИТЕ ЛИГУ</b>\n\n"
             "Нажмите на лигу, чтобы присоединиться:",
             parse_mode="HTML",
@@ -517,19 +519,20 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             text += f"🏆 Главный приз: {league['prize']}\n"
             text += f"📊 Команды: {league['teams']}\n"
             text += f"🌍 Страны: {league['countries']}\n\n"
-            text += "Вы успешно присоединились к лиге!"
+            text += "✅ Вы успешно присоединились к лиге!"
             
-            await callback.message.edit_text(
+            await callback.message.delete()
+            await callback.message.answer(
                 text,
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 Назад к лигам", callback_data="show_leagues")],
                     [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
                 ])
             )
     
     # Помощь
     elif callback.data == "show_help":
+        await callback.message.delete()
         help_text = (
             "📋 <b>Помощь по боту</b>\n\n"
             "🏒 <b>Сыграть матч</b> - начать матч между командами\n"
@@ -548,16 +551,21 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             "• ВХЛ - Кубок Петрова\n"
             "• МХЛ - Кубок Харламова"
         )
-        await callback.message.edit_text(help_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-        ]))
+        await callback.message.answer(
+            help_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+            ])
+        )
     
     # Рейтинг
     elif callback.data == "show_rating":
         try:
+            await callback.message.delete()
             teams = get_all_teams()
             if not teams:
-                await callback.message.edit_text("❌ Команды не найдены!")
+                await callback.message.answer("❌ Команды не найдены!")
                 return
             
             text = "⭐ <b>РЕЙТИНГ КОМАНД</b>\n\n"
@@ -582,15 +590,20 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
                 medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
                 text += f"{medal} <b>{team['name']}</b> - {team['rating']}\n"
             
-            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-            ]))
+            await callback.message.answer(
+                text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+                ])
+            )
         except Exception as e:
             logging.error(f"Ошибка в show_rating: {e}", exc_info=True)
-            await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
+            await callback.message.answer(f"❌ Ошибка: {str(e)}")
     
     # Профиль
     elif callback.data == "show_profile":
+        await callback.message.delete()
         user_id = str(callback.from_user.id)
         user_data = load_user_data(user_id)
         username = callback.from_user.username or callback.from_user.first_name
@@ -610,13 +623,18 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             f"🔄 Передач: {user_data.get('assists', 0) if user_data else 0}\n\n"
             f"⭐ Рейтинг: {user_data.get('rating', 1000) if user_data else 1000}"
         )
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-        ]))
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+            ])
+        )
     
     # Коллекция
     elif callback.data == "show_collection":
         try:
+            await callback.message.delete()
             players = load_players()
             
             text = "🔄 <b>КОЛЛЕКЦИЯ ИГРОКОВ</b>\n\n"
@@ -646,16 +664,21 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
             text += f"   В основном составе: {total_main}\n"
             text += f"   В запасе: {total_reserve}\n"
             
-            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-            ]))
+            await callback.message.answer(
+                text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+                ])
+            )
         except Exception as e:
             logging.error(f"Ошибка в show_collection: {e}", exc_info=True)
-            await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
+            await callback.message.answer(f"❌ Ошибка: {str(e)}")
     
     # Выбор команды для просмотра состава
     elif callback.data == "show_team":
-        await callback.message.edit_text(
+        await callback.message.delete()
+        await callback.message.answer(
             "📋 <b>Выберите команду для просмотра состава:</b>",
             parse_mode="HTML",
             reply_markup=get_team_keyboard()
@@ -669,7 +692,8 @@ async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
     
     # Выбор команды для матча
     elif callback.data == "play_match":
-        await callback.message.edit_text(
+        await callback.message.delete()
+        await callback.message.answer(
             "🏒 <b>Выберите команду за которую будете играть:</b>",
             parse_mode="HTML",
             reply_markup=get_match_team_keyboard()
@@ -699,7 +723,7 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
         team_b = load_team_by_name(team_b_name)
         
         if not team_a or not team_b:
-            await message.edit_text("❌ Одна из команд не найдена!")
+            await message.answer("❌ Одна из команд не найдена!", reply_markup=get_main_menu())
             return
         
         match_manager = MatchManager(team_a, team_b, user_team_name)
@@ -707,7 +731,7 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
         chat_id = message.chat.id
         active_matches[chat_id] = match_manager
         
-        await message.edit_text(
+        await message.answer(
             f"🏒 <b>МАТЧ НАЧИНАЕТСЯ!</b>\n\n"
             f"⚔️ {team_a_name} vs {team_b_name}\n"
             f"📊 Рейтинг {team_a_name}: {match_manager.rating_a}\n"
@@ -721,7 +745,7 @@ async def start_match(message: types.Message, team_a_name: str, team_b_name: str
         
     except Exception as e:
         logging.error(f"Ошибка в start_match: {e}", exc_info=True)
-        await message.edit_text(f"❌ Ошибка при проведении матча: {str(e)}")
+        await message.answer(f"❌ Ошибка при проведении матча: {str(e)}")
 
 async def show_next_episode(message: types.Message):
     """Показывает следующий эпизод матча отдельным сообщением"""
