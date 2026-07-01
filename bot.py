@@ -720,10 +720,16 @@ async def show_next_episode(message: types.Message):
         await end_match(message)
         return
     
-    # Формируем текст эпизода как на скриншоте
+    # Формируем текст эпизода
     if episode.get('is_period_end'):
+        period_score_a = episode.get('period_score_a', 0)
+        period_score_b = episode.get('period_score_b', 0)
+        total_score_a = episode.get('total_score_a', 0)
+        total_score_b = episode.get('total_score_b', 0)
+        
         text = f"🔴 {episode['events'][0]}\n\n"
-        text += f"📊 Счёт: {match_manager.team_a_name} {match_manager.score_a} - {match_manager.score_b} {match_manager.team_b_name}"
+        text += f"📊 Счёт периода: {match_manager.team_a_name} {period_score_a} - {period_score_b} {match_manager.team_b_name}\n"
+        text += f"📊 Общий счёт: {match_manager.team_a_name} {total_score_a} - {total_score_b} {match_manager.team_b_name}"
         text += "\n\n⏸️ ПЕРЕРЫВ 15 МИНУТ"
         
         await message.answer(text, parse_mode="HTML")
@@ -750,48 +756,6 @@ async def show_next_episode(message: types.Message):
                 "▶️ Нажмите для следующего эпизода:",
                 reply_markup=get_match_control_keyboard()
             )
-
-async def end_match(message: types.Message):
-    chat_id = message.chat.id
-    if chat_id not in active_matches:
-        await message.answer("❌ Матч не найден!")
-        return
-    
-    match_manager = active_matches[chat_id]
-    result = match_manager.get_final_result()
-    
-    text = "🏒 <b>ИТОГИ МАТЧА</b>\n\n"
-    text += f"⚔️ {result['team_a']} vs {result['team_b']}\n\n"
-    
-    text += "📊 <b>Счет по периодам:</b>\n"
-    for ps in result['period_scores']:
-        text += f"  Период {ps['period']}: {ps['score_a']} - {ps['score_b']}\n"
-    
-    text += f"\n📊 <b>ФИНАЛЬНЫЙ СЧЁТ: {result['score_a']} - {result['score_b']}</b>\n\n"
-    
-    if result['winner']:
-        text += f"🏆 <b>ПОБЕДИТЕЛЬ: {result['winner']}</b>\n"
-    else:
-        text += f"🤝 <b>НИЧЬЯ</b>\n"
-    
-    user_id = str(message.chat.id)
-    user_data = load_user_data(user_id)
-    if user_data:
-        user_data['matches'] = user_data.get('matches', 0) + 1
-        if result['winner'] == user_data.get('team_name'):
-            user_data['wins'] = user_data.get('wins', 0) + 1
-        save_user_data(user_id, user_data)
-    
-    del active_matches[chat_id]
-    
-    await message.answer(text, parse_mode="HTML")
-    
-    await message.answer(
-        "🏒 <b>Главное меню:</b>",
-        parse_mode="HTML",
-        reply_markup=get_main_menu()
-    )
-
 async def main():
     logging.info("Бот запускается...")
     await bot.delete_webhook(drop_pending_updates=True)
